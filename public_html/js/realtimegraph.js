@@ -1,5 +1,8 @@
 'use strict';
 
+const svgID = "svgarea";
+const streamBaseURL = "wss://ws.zaif.jp/stream?currency_pair=";
+const currency_pair_list = Object.freeze(["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"]);
 const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
 
@@ -7,13 +10,13 @@ class Graph {
 	constructor(obj) {
 		this._focus_margin = {top: 30, right: 10, bottom: 20, left: 60};
 		this._focus_width = 850 - this._focus_margin.left - this._focus_margin.right;
-		this._focus_height = 450 - this._focus_margin.top - this._focus_margin.bottom;
-		this._context_margin = {top: 460, right: 10, bottom: 20, left: 60};
+		this._focus_height = 500 - this._focus_margin.top - this._focus_margin.bottom;
+		this._context_margin = {top: 510, right: 10, bottom: 20, left: 60};
 		this._context_width = 850 - this._context_margin.left - this._context_margin.right;
-		this._context_height = 550 - this._context_margin.top - this._context_margin.bottom;
-		this._depth_margin = {top: 560, right: 10, bottom: 20, left: 60};
+		this._context_height = 620 - this._context_margin.top - this._context_margin.bottom;
+		this._depth_margin = {top: 630, right: 10, bottom: 20, left: 60};
 		this._depth_width = 850 - this._depth_margin.left - this._depth_margin.right;
-		this._depth_height = 670 - this._depth_margin.top - this._depth_margin.bottom;
+		this._depth_height = 760 - this._depth_margin.top - this._depth_margin.bottom;
 		this._drawing = true;
 		this._tid = 0;
 		this._rid = 0;
@@ -22,18 +25,20 @@ class Graph {
 		this._focus_data_legend = [];
 		this._context_data = [];
 		this._depth_data = [{
-				name: "Asks",
-				values: []
-			}, {
-				name: "Bids",
-				values: []
-			}
-		];
+			name: "Asks",
+			values: []
+		}, {
+			name: "Bids",
+			values: []
+		}];
 		this._datamap = {};
 		this._ydtmp = [];
 		this._draw_focus = false;
 		this._draw_context = false;
 		this._draw_depth = false;
+		this._focus_xaxis_sec = 120;
+		this._focus_domain_xaxis_update = false;
+		this._focus_domain_yaxis_update = false;
 
 		this.focus_x = d3.scaleLinear()
 			.domain([0, 0])
@@ -130,7 +135,7 @@ class Graph {
 		// オブジェクト構築
 		this.init(obj);
 
-		this.svg = d3.select("#svgarea").append("svg");
+		this.svg = d3.select("#" + svgID).append("svg");
 		this.svg
 			.attr("width", this._focus_width + this._focus_margin.left + this._focus_margin.right + 10)
 			.attr("height", this._depth_height + this._depth_margin.top + this._depth_margin.bottom + 10);
@@ -233,10 +238,13 @@ class Graph {
 	}
 	init(data){
 		const date = data.Date;
-		this._ydtmp = [
-			{date:date, data:10000000},
-			{date:date, data:-10000000}
-		];
+		this._ydtmp = [{
+			date: date,
+			data: 10000000
+		}, {
+			date: date,
+			data: -10000000
+		}];
 		this.context_color.domain([]);
 		this.addsig(data);
 		this.addContext(data);
@@ -271,7 +279,7 @@ class Graph {
 		if(this._rid){
 			window.cancelAnimationFrame(this._rid);
 		}
-		$("#svgarea").empty();
+		document.getElementById(svgID).innerHTML = "";
 	}
 	addsig(data){
 		const date = data.Date;
@@ -328,7 +336,7 @@ class Graph {
 	}
 	addContext(data){
 		const date = data.Date;
-		const idxstart = new Date(data.Date - (120 * 1000));
+		const datestart = new Date(data.Date - (this._focus_xaxis_sec * 1000));
 		const l = this._focus_data.length;
 		const sigs = data.Signals;
 		for(let i = 0; i < l; i++){
@@ -353,7 +361,7 @@ class Graph {
 				while(it.values.length > 2000){
 					it.values.shift();
 				}
-				while((it.values.length > 2) && (it.values[0].date < idxstart) && (it.values[1].date < idxstart)){
+				while((it.values.length > 2) && (it.values[0].date < datestart) && (it.values[1].date < datestart)){
 					it.values.shift();
 				}
 				while(it2.values.length > 5000){
@@ -400,8 +408,8 @@ class Graph {
 	}
 	updateContextDomain(data){
 		const date = data.Date;
-		const idxstart = new Date(date - (120 * 1000));
-		const focus_xd = [idxstart, date];
+		const datestart = new Date(date - (this._focus_xaxis_sec * 1000));
+		const focus_xd = [datestart, date];
 		const sigs = data.Signals;
 		let context_xd = this.context_x.domain();
 		let context_yd = this.context_y.domain();
@@ -435,7 +443,7 @@ class Graph {
 			}
 		}
 		// 現在の最大最小が表示外になった場合
-		if(ydtmp[0].date < idxstart){
+		if(ydtmp[0].date < datestart || this._focus_domain_yaxis_update){
 			ydtmp[0].data = 10000000;
 			const datalen = this._focus_data.length;
 			for(let j = 0; j < datalen; j++){
@@ -445,7 +453,7 @@ class Graph {
 				}
 			}
 		}
-		if(ydtmp[1].date < idxstart){
+		if(ydtmp[1].date < datestart || this._focus_domain_yaxis_update){
 			ydtmp[1].data = -10000000;
 			const datalen = this._focus_data.length;
 			for(let j = 0; j < datalen; j++){
@@ -456,6 +464,7 @@ class Graph {
 			}
 		}
 	
+		this._focus_domain_yaxis_update = false;
 		this.focus_x.domain(focus_xd);
 		this.context_x.domain(context_xd);
 		this.focus_y.domain([ydtmp[0].data, ydtmp[1].data]).nice();
@@ -478,6 +487,25 @@ class Graph {
 
 		this.depth_x.domain(depth_xd);
 		this.depth_y.domain(depth_yd).nice();
+	}
+	setFocusXAxis(sec = 120){
+		const datestart = new Date(Date.now() - (sec * 1000));
+		const l = this._focus_data.length;
+		for(let i = 0; i < l; i++){
+			const f = this._focus_data[i];
+			const c = this._context_data[i];
+			const clen = c.length;
+			let j = 0;
+			for(j = 0; j < clen; j++){
+				if(c.values[j].date >= datestart){
+					break;
+				}
+			}
+			f.values = c.values.slice(j);
+			//f.values = c.values.filter(it => it.date >= datestart);
+		}
+		this._focus_domain_yaxis_update = true;
+		this._focus_xaxis_sec = sec;
 	}
 	draw(){
 		if(this._drawing){
@@ -515,37 +543,9 @@ class Graph {
 }
 
 class Client {
-	constructor(hash) {
+	constructor(hash = "#btc_jpy"){
+		const wss = Client.getWebsocketURL(hash);
 		this._graph = {};
-		let wss = "wss://ws.zaif.jp/stream?currency_pair=";
-		window.dispdata.currency.xem = "";
-		window.dispdata.currency.mona = "";
-		window.dispdata.currency.bch = "";
-		window.dispdata.currency.eth = "";
-		window.dispdata.currency.btc = "";
-		switch(hash){
-			case "#xem_jpy":
-				wss += "xem_jpy";
-				window.dispdata.currency.xem = "active";
-				break;
-			case "#mona_jpy":
-				wss += "mona_jpy";
-				window.dispdata.currency.mona = "active";
-				break;
-			case "#bch_jpy":
-				wss += "bch_jpy";
-				window.dispdata.currency.bch = "active";
-				break;
-			case "#eth_jpy":
-				wss += "eth_jpy";
-				window.dispdata.currency.eth = "active";
-				break;
-			case "#btc_jpy":
-			default:
-				wss += "btc_jpy";
-				window.dispdata.currency.btc = "active";
-				break;
-		}
 		this._ws = new WebSocket(wss);
 		this._ws.onopen = () => {
 			console.log('接続しました。');
@@ -569,6 +569,23 @@ class Client {
 				delete this._graph[key];
 			}
 		}
+	}
+	static getWebsocketURL(hash = "#btc_jpy"){
+		for(const key in window.dispdata.currency){
+			if(window.dispdata.currency.hasOwnProperty(key)){
+				window.dispdata.currency[key] = "";
+			}
+		}
+		let wss = streamBaseURL;
+		const cp = hash.slice(1);
+		if(currency_pair_list.find(data => data === cp) != undefined){
+			window.dispdata.currency[cp] = "active";
+			wss += cp;
+		} else {
+			window.dispdata.currency[currency_pair_list[0]] = "active";
+			wss += currency_pair_list[0];
+		}
+		return wss;
 	}
 	static getDirection(action){
 		return action === "ask" ? "▼" : "▲";
@@ -598,8 +615,10 @@ class Client {
 		} else {
 			this.addData(data);
 		}
-
 		// vue用
+		this.updateView(obj);
+	}
+	updateView(obj){
 		const cp = obj.currency_pair.split("_")
 		window.dispdata.currency_pair.first = cp[0];
 		window.dispdata.currency_pair.second = cp[1];
@@ -608,9 +627,9 @@ class Client {
 		window.dispdata.last_trade.type = obj.last_price.action;
 		document.title = window.dispdata.last_trade.action
 			+ " " + window.dispdata.last_trade.price
-			+ " (" + window.dispdata.currency_pair.first + "/" + window.dispdata.currency_pair.second + ") 観察"
+			+ " (" + window.dispdata.currency_pair.first + "/" + window.dispdata.currency_pair.second + ") 取引の様子"
 			+ " - zaifの取引情報を表示するやつ";
-		let tr = [];
+		const tr = [];
 		for(let i = obj.trades.length - 1; i >= 0; i--){
 			const it = obj.trades[i];
 			let dir = "";
@@ -637,9 +656,9 @@ class Client {
 		window.dispdata.asks = this.analyzeBoard(obj.asks);
 		window.dispdata.date_diff = (Date.parse(obj.timestamp) - Date.now()) / 1000;
 	}
-	analyzeBoard(data) {
-		let board = [];
+	analyzeBoard(data){
 		let dep = 0;
+		const board = [];
 		const len = data.length;
 		for(let i = 0; i < len; i++){
 			dep += data[i][0] * data[i][1];
@@ -650,6 +669,13 @@ class Client {
 			});
 		}
 		return board;
+	}
+	setGraphFocusXAxis(sec){
+		for(const key in this._graph){
+			if(this._graph.hasOwnProperty(key)){
+				this._graph[key].setFocusXAxis(sec);
+			}
+		}
 	}
 	createGraph(obj){
 		this._graph[obj.Name] = new Graph(obj);
@@ -671,22 +697,39 @@ window.dispdata = {
 	bids: [],
 	asks: [],
 	trades: [],
+	focus: {
+		xaxis: {
+			selected: 120,
+			options: [
+				{text: "1分", value: 60},
+				{text: "2分", value: 120},
+				{text: "5分", value: 300},
+				{text: "10分", value: 600},
+				{text: "30分", value: 1800}
+			]
+		}
+	},
 	currency_pair: {
 		first: "btc",
 		second: "jpy"
 	},
 	date_diff: 0,
 	currency: {
-		btc: "",
-		xem: "",
-		mona: "",
-		bch: "",
-		eth: ""
+		btc_jpy: "",
+		xem_jpy: "",
+		mona_jpy: "",
+		bch_jpy: "",
+		eth_jpy: ""
 	}
 };
 window.vm = new Vue({
 	el: "#container",
-	data: window.dispdata
+	data: window.dispdata,
+	watch: {
+		"focus.xaxis.selected": (n, o) => {
+			window.cli.setGraphFocusXAxis(n);
+		}
+	}
 });
 window.cli = new Client(location.hash);
 window.addEventListener("hashchange", (ev) => {
