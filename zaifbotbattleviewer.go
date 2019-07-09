@@ -24,7 +24,6 @@ type LastPrice struct {
 	Action string  `json:"action"`
 	Price  float64 `json:"price"`
 }
-
 type Trade struct {
 	CurrentyPair string  `json:"currenty_pair"`
 	TradeType    string  `json:"trade_type"`
@@ -54,26 +53,38 @@ type Stream struct {
 	LastPrice    LastPrice     `json:"last_price"`
 	CurrentyPair string        `json:"currency_pair"`
 }
-
+type StoreData struct {
+	Ask       *PriceAmount `json:"ask,omitempty"`
+	Bid       *PriceAmount `json:"bid,omitempty"`
+	Trade     *Trade       `json:"trade,omitempty"`
+	Timestamp Timestamp    `json:"timestamp"`
+}
 type BBHandler struct {
 	fs    http.Handler
 	reqch chan<- Request
 }
-
 type StreamPacket struct {
 	name string
 	s    Stream
 }
+type StoreDataPacket struct {
+	name string
+	sd   StoreData
+}
+type StoreItem struct {
+	name string
+	w    *bufio.Writer
+	fp   *os.File
+}
 type Result struct {
 	err error
-	sl  []Stream
+	sl  []StoreData
 }
 type Request struct {
 	name   string
-	filter func([]Stream) []Stream
+	filter func([]StoreData) []StoreData
 	wch    chan<- Result
 }
-
 type Output struct {
 	Code   int
 	Header http.Header
@@ -110,7 +121,7 @@ func main() {
 		Handler: &nh,
 	}
 	sch := make(chan StreamPacket, 32)
-	storesch := make(chan StreamPacket, 32)
+	storesch := make(chan StoreDataPacket, 32)
 	for key, u := range zaifStremUrlList {
 		go func(wss, key string, wsch chan<- StreamPacket) {
 			wait := (time.Duration(rand.Uint64()%3000) * time.Millisecond) + (2 * time.Second)
@@ -129,9 +140,6 @@ func main() {
 						if err != nil {
 							return err
 						}
-						s.Asks = s.Asks[:1]
-						s.Bids = s.Bids[:1]
-						s.Trades = s.Trades[:1]
 						wsch <- StreamPacket{
 							name: key,
 							s:    s,
@@ -150,13 +158,21 @@ func main() {
 			}
 		}(u, key, sch)
 	}
-	go func(rsch <-chan StreamPacket, wsch chan<- StreamPacket, reqch <-chan Request) {
-		slm := make(map[string][]Stream, 8)
+	go func(rsch <-chan StreamPacket, wsch chan<- StoreDataPacket, reqch <-chan Request) {
+		slm := make(map[string][]StoreData, 8)
+		oldstream := make(map[string]Stream, 8)
 		for {
 			select {
 			case it := <-rsch:
-				slm[it.name] = appendStream(slm[it.name], it.s)
-				wsch <- it
+				sl, ok := appendStore(slm[it.name], it.s, oldstream[it.name])
+				slm[it.name] = sl
+				oldstream[it.name] = it.s
+				if ok {
+					wsch <- StoreDataPacket{
+						name: it.name,
+						sd:   slm[it.name][len(slm[it.name])-1],
+					}
+				}
 			case it := <-reqch:
 				if sl, ok := slm[it.name]; ok {
 					if it.filter != nil {
@@ -174,12 +190,7 @@ func main() {
 			}
 		}
 	}(sch, storesch, reqch)
-	go func(rsch <-chan StreamPacket) {
-		type StoreItem struct {
-			name string
-			w    *bufio.Writer
-			fp   *os.File
-		}
+	go func(rsch <-chan StoreDataPacket) {
 		old := time.Now()
 		tc := time.NewTimer(time.Second)
 		m := make(map[string]StoreItem, 8)
@@ -200,7 +211,7 @@ func main() {
 					}
 					m[it.name] = si
 				}
-				err := json.NewEncoder(si.w).Encode(it.s)
+				err := json.NewEncoder(si.w).Encode(it.sd)
 				if err != nil {
 					log.Infow("JSONファイル出力に失敗しました。", "error", err)
 				}
@@ -228,22 +239,51 @@ func main() {
 	log.Fatal(server.ListenAndServe())
 }
 
-func appendStream(sl []Stream, s Stream) []Stream {
-	sl = append(sl, s)
-	for len(sl) > 4096 {
-		sl = sl[1:]
+func appendStore(sl []StoreData, s, olds Stream) ([]StoreData, bool) {
+	write := false
+	sd := StoreData{}
+	sd.Timestamp = s.Timestamp
+	if len(olds.Asks) == 0 {
+		sd.Ask = &s.Asks[0]
+		sd.Bid = &s.Bids[0]
+		sd.Trade = &s.Trades[0]
+		write = true
+	} else {
+		switch {
+		case s.Asks[0][0] != olds.Asks[0][0],
+			s.Asks[0][1] != olds.Asks[0][1]:
+			sd.Ask = &s.Asks[0]
+			write = true
+		}
+		switch {
+		case s.Bids[0][0] != olds.Bids[0][0],
+			s.Bids[0][1] != olds.Bids[0][1]:
+			sd.Bid = &s.Bids[0]
+			write = true
+		}
+		switch {
+		case s.Trades[0].TradeType != olds.Trades[0].TradeType,
+			s.Trades[0].Price != olds.Trades[0].Price,
+			s.Trades[0].Tid != olds.Trades[0].Tid,
+			s.Trades[0].Amount != olds.Trades[0].Amount:
+			sd.Trade = &s.Trades[0]
+			write = true
+		}
 	}
-	return sl
+	if write {
+		sl = append(sl, sd)
+		for len(sl) > 4096 {
+			sl = sl[1:]
+		}
+	}
+	return sl, write
 }
 
-func (bbh *BBHandler) getStream(name string) []Stream {
+func (bbh *BBHandler) getStoreData(name string) []StoreData {
 	ch := make(chan Result, 1)
 	bbh.reqch <- Request{
 		name: name,
-		filter: func(s []Stream) []Stream {
-			if len(s) > 100 {
-				return s[len(s)-100:]
-			}
+		filter: func(s []StoreData) []StoreData {
 			return s
 		},
 		wch: ch,
@@ -261,7 +301,7 @@ func (bbh *BBHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		out := HtmlOutputParam("application/json; charset=utf-8")
 		wc, sw := PreOutput(w, r, out)
 		defer wc.Close()
-		err := json.NewEncoder(wc).Encode(bbh.getStream(r.URL.Path[17:]))
+		err := json.NewEncoder(wc).Encode(bbh.getStoreData(r.URL.Path[17:]))
 		if err != nil {
 			log.Infow("JSON出力に失敗しました。", "error", err, "path", r.URL.Path, "size", sw.Size())
 		}
