@@ -2,6 +2,7 @@
 
 const svgID = "svgarea";
 const streamBaseURL = "wss://ws.zaif.jp/stream?currency_pair=";
+const historyDataURL = "/api/1/oldstream/";
 const currency_pair_list = Object.freeze(["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"]);
 const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
@@ -56,7 +57,8 @@ class Graph {
 			.tickPadding(7)
 			.ticks(5);
 		this.focus_line = d3.line()
-			.curve(d3.curveLinear)
+			//.curve(d3.curveLinear)
+			.curve(d3.curveStepAfter)
 			.x(d => this.focus_x(d.date))
 			.y(d => this.focus_y(d.data));
 		this.focus_path_d = d => this.focus_line(d.values);
@@ -76,7 +78,8 @@ class Graph {
 			.tickSizeInner(-this._context_width)
 			.tickPadding(7);
 		this.context_line = d3.line()
-			.curve(d3.curveLinear)
+			//.curve(d3.curveLinear)
+			.curve(d3.curveStepAfter)
 			.x(d => this.context_x(d.date))
 			.y(d => this.context_y(d.data));
 		this.context_path_d = d => this.context_line(d.values);
@@ -247,8 +250,8 @@ class Graph {
 		}];
 		this.context_color.domain([]);
 		this.addsig(data);
-		this.addContext(data);
-		this.addDepth(data);
+		//this.addContext(data);
+		//this.addDepth(data);
 
 		this._tid = window.setInterval(() => {
 			let data = {
@@ -336,7 +339,7 @@ class Graph {
 	}
 	addContext(data){
 		const date = data.Date;
-		const datestart = new Date(data.Date - (this._focus_xaxis_sec * 1000));
+		const datestart = new Date(Date.now() - (this._focus_xaxis_sec * 1000));
 		const l = this._focus_data.length;
 		const sigs = data.Signals;
 		for(let i = 0; i < l; i++){
@@ -544,14 +547,15 @@ class Graph {
 
 class Client {
 	constructor(hash = "#btc_jpy"){
-		const wss = Client.getWebsocketURL(hash);
-		this._graph = {};
-		this._ws = new WebSocket(wss);
+		this._graph = undefined;
+		this.currency_pair = this.getCurrencyPair(hash);
+		this.loadHistory();
+		this._ws = new WebSocket(this.getWebsocketURL());
 		this._ws.onopen = () => {
 			console.log('接続しました。');
 		};
 		this._ws.onerror = (error) => {
-			console.log('WebSocket Error ' + error);
+			console.error('WebSocket Error ' + error);
 		};
 		this._ws.onclose = () => {
 			console.log('切断しました。');
@@ -563,28 +567,25 @@ class Client {
 	}
 	dispose(){
 		this._ws.close();
-		for(const key in this._graph){
-			if(this._graph.hasOwnProperty(key)){
-				this._graph[key].dispose();
-				delete this._graph[key];
-			}
-		}
+		this._graph.dispose();
+		this._graph = undefined;
 	}
-	static getWebsocketURL(hash = "#btc_jpy"){
+	getCurrencyPair(hash = "#btc_jpy"){
+		let cp = hash.slice(1);
+		if(currency_pair_list.find(data => data === cp) == undefined){
+			cp = currency_pair_list[0];
+		}
+		return cp
+	}
+	getWebsocketURL(){
 		for(const key in window.dispdata.currency){
 			if(window.dispdata.currency.hasOwnProperty(key)){
 				window.dispdata.currency[key] = "";
 			}
 		}
 		let wss = streamBaseURL;
-		const cp = hash.slice(1);
-		if(currency_pair_list.find(data => data === cp) != undefined){
-			window.dispdata.currency[cp] = "active";
-			wss += cp;
-		} else {
-			window.dispdata.currency[currency_pair_list[0]] = "active";
-			wss += currency_pair_list[0];
-		}
+		window.dispdata.currency[this.currency_pair] = "active";
+		wss += this.currency_pair;
 		return wss;
 	}
 	static getDirection(action){
@@ -610,11 +611,10 @@ class Client {
 				Bids: obj.bids
 			}
 		};
-		if(this._graph[data.Name] === undefined){
+		if(this._graph === undefined){
 			this.createGraph(data);
-		} else {
-			this.addData(data);
 		}
+		this.addData(data);
 		// vue用
 		this.updateView(obj);
 	}
@@ -671,20 +671,78 @@ class Client {
 		return board;
 	}
 	setGraphFocusXAxis(sec){
-		for(const key in this._graph){
-			if(this._graph.hasOwnProperty(key)){
-				this._graph[key].setFocusXAxis(sec);
-			}
-		}
+		this._graph.setFocusXAxis(sec);
 	}
 	createGraph(obj){
-		this._graph[obj.Name] = new Graph(obj);
+		this._graph = new Graph(obj);
 	}
 	addData(obj){
-		const gr = this._graph[obj.Name];
+		const gr = this._graph;
 		gr.addContext(obj);
 		gr.addDepth(obj);
 		gr.draw();
+	}
+	loadHistory(){
+		const url = historyDataURL + this.currency_pair;
+		const xhr = new XMLHttpRequest();
+		xhr.ontimeout = () => {
+			console.error("The request for " + url + " timed out.");
+		};
+		xhr.onload = (e) => {
+			if (xhr.readyState === 4) {
+				if (xhr.status === 200) {
+					console.log("履歴の取得に成功");
+					this.addDataHistory(JSON.parse(xhr.responseText));
+				} else {
+					console.error(xhr.statusText);
+				}
+			}
+		};
+		xhr.onerror = (e) => {
+			console.error(xhr.statusText);
+		};
+		xhr.open("GET", url, true);
+		xhr.timeout = 5000;		// 5秒
+		xhr.send(null);
+	}
+	addDataHistory(data){
+		let ask = undefined;
+		let bid = undefined;
+		let trade = undefined;
+		const l = data.length;
+		for(let i = 0; i < l; i++){
+			if(data[i].ask !== undefined){
+				ask = data[i].ask;
+			}
+			if(data[i].bid !== undefined){
+				bid = data[i].bid;
+			}
+			if(data[i].trade !== undefined){
+				trade = data[i].trade;
+			}
+			if(ask !== undefined && bid !== undefined && trade !== undefined){
+				const obj = {
+					Name: this.currency_pair,
+					Date: new Date(data[i].ts * 1000),
+					Signals: {
+						Asks: {
+							Data: ask[0]
+						},
+						Bids: {
+							Data: bid[0]
+						},
+						LastPrice: {
+							Data: trade.price
+						}
+					}
+				};
+				if(this._graph === undefined){
+					this.createGraph(obj);
+				}
+				this._graph.addContext(obj);
+			}
+		}
+		this._graph.draw();
 	}
 }
 

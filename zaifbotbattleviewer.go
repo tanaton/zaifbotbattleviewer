@@ -36,7 +36,8 @@ type Timestamp time.Time
 
 func (ts *Timestamp) UnmarshalJSON(data []byte) error {
 	// 2019-07-08 18:59:36.105162
-	t, err := time.Parse(`"2006-01-02 15:04:05.000000"`, string(data))
+	loc, _ := time.LoadLocation("Asia/Tokyo")
+	t, err := time.ParseInLocation(`"2006-01-02 15:04:05.000000"`, string(data), loc)
 	*ts = Timestamp(t)
 	return err
 }
@@ -57,7 +58,7 @@ type StoreData struct {
 	Ask       *PriceAmount `json:"ask,omitempty"`
 	Bid       *PriceAmount `json:"bid,omitempty"`
 	Trade     *Trade       `json:"trade,omitempty"`
-	Timestamp Timestamp    `json:"timestamp"`
+	Timestamp Timestamp    `json:"ts"`
 }
 type BBHandler struct {
 	fs    http.Handler
