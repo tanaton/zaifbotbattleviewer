@@ -41,7 +41,16 @@ func (ts *Timestamp) UnmarshalJSON(data []byte) error {
 	*ts = Timestamp(t)
 	return err
 }
-func (ts Timestamp) MarshalJSON() ([]byte, error) {
+
+type Unixtime time.Time
+
+func (ts *Unixtime) UnmarshalJSON(data []byte) error {
+	i, err := strconv.ParseInt(string(data), 10, 64)
+	t := time.Unix(i, 0)
+	*ts = Unixtime(t)
+	return err
+}
+func (ts Unixtime) MarshalJSON() ([]byte, error) {
 	buf := make([]byte, 0, 10)
 	return strconv.AppendInt(buf, time.Time(ts).Unix(), 10), nil
 }
@@ -58,7 +67,7 @@ type StoreData struct {
 	Ask       *PriceAmount `json:"ask,omitempty"`
 	Bid       *PriceAmount `json:"bid,omitempty"`
 	Trade     *Trade       `json:"trade,omitempty"`
-	Timestamp Timestamp    `json:"ts"`
+	Timestamp Unixtime     `json:"ts"`
 }
 type BBHandler struct {
 	fs    http.Handler
@@ -125,7 +134,7 @@ func main() {
 	storesch := make(chan StoreDataPacket, 32)
 	for key, u := range zaifStremUrlList {
 		go func(wss, key string, wsch chan<- StreamPacket) {
-			wait := (time.Duration(rand.Uint64()%3000) * time.Millisecond) + (2 * time.Second)
+			wait := time.Duration(rand.Uint64()%5000) * time.Millisecond
 			for {
 				time.Sleep(wait)
 				log.Infow("Websoket接続", "path", wss)
@@ -155,6 +164,7 @@ func main() {
 				}
 				if wait < 180*time.Second {
 					wait *= 2
+					wait += time.Duration(rand.Uint64() % 5000)
 				}
 			}
 		}(u, key, sch)
@@ -162,6 +172,33 @@ func main() {
 	go func(rsch <-chan StreamPacket, wsch chan<- StoreDataPacket, reqch <-chan Request) {
 		slm := make(map[string][]StoreData, 8)
 		oldstream := make(map[string]Stream, 8)
+		now := time.Now()
+		for key, _ := range zaifStremUrlList {
+			err := func(key string) error {
+				p := createStoreFilePath(now, key)
+				fp, err := os.Open(p)
+				if err != nil {
+					return err
+				}
+				defer fp.Close()
+				sl := []StoreData{}
+				scanner := bufio.NewScanner(fp)
+				for scanner.Scan() {
+					sd := StoreData{}
+					err := json.Unmarshal(scanner.Bytes(), &sd)
+					if err != nil {
+						log.Infow("JSON解析失敗", "error", err, "json", scanner.Text())
+						continue
+					}
+					sl = append(sl, sd)
+				}
+				slm[key] = sl
+				return nil
+			}(key)
+			if err != nil {
+				log.Infow("ファイル読み込み失敗", "error", err)
+			}
+		}
 		for {
 			select {
 			case it := <-rsch:
@@ -193,15 +230,15 @@ func main() {
 	}(sch, storesch, reqch)
 	go func(rsch <-chan StoreDataPacket) {
 		old := time.Now()
-		tc := time.NewTimer(time.Second)
+		tc := time.NewTicker(time.Second)
 		m := make(map[string]StoreItem, 8)
 		for {
 			select {
 			case it := <-rsch:
 				si, ok := m[it.name]
 				if !ok {
-					p := filepath.Join("data", fmt.Sprintf("%s_%s.json", old.Format("20060102"), it.name))
-					fp, err := os.Create(p)
+					p := createStoreFilePath(old, it.name)
+					fp, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
 					if err != nil {
 						log.Infow("JSONファイル生成に失敗しました。", "error", err, "path", p)
 					}
@@ -221,7 +258,7 @@ func main() {
 					for key, it := range m {
 						it.w.Flush()
 						it.fp.Close()
-						p := filepath.Join("data", fmt.Sprintf("%s_%s.json", now.Format("20060102"), key))
+						p := createStoreFilePath(now, key)
 						fp, err := os.Create(p)
 						if err != nil {
 							log.Infow("JSONファイル生成に失敗しました。", "error", err, "path", p)
@@ -240,10 +277,14 @@ func main() {
 	log.Fatal(server.ListenAndServe())
 }
 
+func createStoreFilePath(date time.Time, name string) string {
+	return filepath.Join("data", fmt.Sprintf("%s_%s.json", date.Format("20060102"), name))
+}
+
 func appendStore(sl []StoreData, s, olds Stream) ([]StoreData, bool) {
 	write := false
 	sd := StoreData{}
-	sd.Timestamp = s.Timestamp
+	sd.Timestamp = Unixtime(s.Timestamp)
 	if len(olds.Asks) == 0 {
 		sd.Ask = &s.Asks[0]
 		sd.Bid = &s.Bids[0]
