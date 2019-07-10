@@ -505,7 +505,6 @@ class Graph {
 				}
 			}
 			f.values = c.values.slice(j);
-			//f.values = c.values.filter(it => it.date >= datestart);
 		}
 		this._focus_domain_yaxis_update = true;
 		this._focus_xaxis_sec = sec;
@@ -548,7 +547,7 @@ class Graph {
 class Client {
 	constructor(hash = "#btc_jpy"){
 		this._graph = undefined;
-		this.currency_pair = this.getCurrencyPair(hash);
+		this.currency_pair = Client.getCurrencyPair(hash);
 		this.loadHistory();
 		this._ws = new WebSocket(this.getWebsocketURL());
 		this._ws.onopen = () => {
@@ -570,7 +569,7 @@ class Client {
 		this._graph.dispose();
 		this._graph = undefined;
 	}
-	getCurrencyPair(hash = "#btc_jpy"){
+	static getCurrencyPair(hash = "#btc_jpy"){
 		let cp = hash.slice(1);
 		if(currency_pair_list.find(data => data === cp) == undefined){
 			cp = currency_pair_list[0];
@@ -578,15 +577,7 @@ class Client {
 		return cp
 	}
 	getWebsocketURL(){
-		for(const key in window.dispdata.currency){
-			if(window.dispdata.currency.hasOwnProperty(key)){
-				window.dispdata.currency[key] = "";
-			}
-		}
-		let wss = streamBaseURL;
-		window.dispdata.currency[this.currency_pair] = "active";
-		wss += this.currency_pair;
-		return wss;
+		return streamBaseURL + this.currency_pair;
 	}
 	static getDirection(action){
 		return action === "ask" ? "▼" : "▲";
@@ -619,7 +610,13 @@ class Client {
 		this.updateView(obj);
 	}
 	updateView(obj){
-		const cp = obj.currency_pair.split("_")
+		const cp = this.currency_pair.split("_");
+		for(const key in window.dispdata.currencys){
+			if(window.dispdata.currencys.hasOwnProperty(key)){
+				window.dispdata.currencys[key].active = "";
+			}
+		}
+		window.dispdata.currencys[this.currency_pair].active = "active";
 		window.dispdata.currency_pair.first = cp[0];
 		window.dispdata.currency_pair.second = cp[1];
 		window.dispdata.last_trade.price = obj.last_price.price.toLocaleString();
@@ -689,8 +686,8 @@ class Client {
 			console.error("The request for " + url + " timed out.");
 		};
 		xhr.onload = (e) => {
-			if (xhr.readyState === 4) {
-				if (xhr.status === 200) {
+			if(xhr.readyState === 4){
+				if(xhr.status === 200){
 					console.log("履歴の取得に成功");
 					this.addDataHistory(JSON.parse(xhr.responseText));
 				} else {
@@ -742,7 +739,9 @@ class Client {
 				this._graph.addContext(obj);
 			}
 		}
-		this._graph.draw();
+		if(ask !== undefined && bid !== undefined && trade !== undefined){
+			this._graph.draw();
+		}
 	}
 }
 
@@ -772,12 +771,12 @@ window.dispdata = {
 		second: "jpy"
 	},
 	date_diff: 0,
-	currency: {
-		btc_jpy: "",
-		xem_jpy: "",
-		mona_jpy: "",
-		bch_jpy: "",
-		eth_jpy: ""
+	currencys: {
+		"btc_jpy": {name: "btc/jpy", hash: "#btc_jpy", active: ""},
+		"xem_jpy": {name: "xem/jpy", hash: "#xem_jpy", active: ""},
+		"mona_jpy": {name: "mona/jpy", hash: "#mona_jpy", active: ""},
+		"bch_jpy": {name: "bch/jpy", hash: "#bch_jpy", active: ""},
+		"eth_jpy": {name: "eth/jpy", hash: "#eth_jpy", active: ""}
 	}
 };
 window.vm = new Vue({
