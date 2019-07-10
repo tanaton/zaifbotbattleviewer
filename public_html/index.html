@@ -61,20 +61,8 @@ body {
 						<li class="nav-item active">
 							<span class="navbar-brand"><span :class="last_trade.type">{{ last_trade.price }} {{ last_trade.action }}</span></span>
 						</li>
-						<li class="nav-item" :class="currency.btc_jpy">
-							<a class="navbar-brand nav-link" href="#btc_jpy">btc/jpy</a>
-						</li>
-						<li class="nav-item" :class="currency.xem_jpy">
-							<a class="navbar-brand nav-link" href="#xem_jpy">xem/jpy</a>
-						</li>
-						<li class="nav-item" :class="currency.mona_jpy">
-							<a class="navbar-brand nav-link" href="#mona_jpy">mona/jpy</a>
-						</li>
-						<li class="nav-item" :class="currency.bch_jpy">
-							<a class="navbar-brand nav-link" href="#bch_jpy">bch/jpy</a>
-						</li>
-						<li class="nav-item" :class="currency.eth_jpy">
-							<a class="navbar-brand nav-link" href="#eth_jpy">eth/jpy</a>
+						<li v-for="currency in currencys" class="nav-item" :class="currency.active">
+							<a class="navbar-brand nav-link" :href="currency.hash">{{ currency.name }}</a>
 						</li>
 					</ul>
 					<span class="navbar-text">
