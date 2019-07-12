@@ -12,9 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/NYTimes/gziphandler"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
@@ -128,7 +128,7 @@ func main() {
 	}
 	server := &http.Server{
 		Addr:    ":8080",
-		Handler: &nh,
+		Handler: gziphandler.MustNewGzipLevelHandler(gzip.BestSpeed)(&nh),
 	}
 	sch := make(chan StreamPacket, 32)
 	storesch := make(chan StoreDataPacket, 32)
@@ -244,7 +244,7 @@ func main() {
 					}
 					si = StoreItem{
 						name: it.name,
-						w:    bufio.NewWriter(fp),
+						w:    bufio.NewWriterSize(fp, 16*1024),
 						fp:   fp,
 					}
 					m[it.name] = si
@@ -268,6 +268,12 @@ func main() {
 						m[key] = it
 					}
 					old = now
+				}
+				if uint64(now.Unix())%30 == 0 {
+					// 定期的に保存する
+					for _, it := range m {
+						it.w.Flush()
+					}
 				}
 			}
 		}
@@ -340,89 +346,13 @@ func (bbh *BBHandler) getStoreData(name string) []StoreData {
 func (bbh *BBHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/1/oldstream/btc_jpy", "/api/1/oldstream/xem_jpy", "/api/1/oldstream/mona_jpy", "/api/1/oldstream/bch_jpy", "/api/1/oldstream/eth_jpy":
-		out := HtmlOutputParam("application/json; charset=utf-8")
-		wc, sw := PreOutput(w, r, out)
-		defer wc.Close()
-		err := json.NewEncoder(wc).Encode(bbh.getStoreData(r.URL.Path[17:]))
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		err := json.NewEncoder(w).Encode(bbh.getStoreData(r.URL.Path[17:]))
 		if err != nil {
-			log.Infow("JSON出力に失敗しました。", "error", err, "path", r.URL.Path, "size", sw.Size())
+			log.Infow("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
 		}
 	default:
 		// その他
 		bbh.fs.ServeHTTP(w, r)
 	}
-}
-
-func Print(resw http.ResponseWriter, r *http.Request, out Output) int {
-	wc, sw := PreOutput(resw, r, out)
-	defer wc.Close()
-	// ボディ出力
-	if r.Method != "HEAD" && out.Reader != nil {
-		io.Copy(wc, out.Reader)
-	}
-	return sw.Size()
-}
-
-func PreOutput(resw http.ResponseWriter, r *http.Request, out Output) (io.WriteCloser, Size) {
-	// ヘッダー設定
-	for key, _ := range out.Header {
-		resw.Header().Set(key, out.Header.Get(key))
-	}
-	resw.Header().Set("X-Frame-Options", "deny")
-
-	// 出力フォーマット切り替え
-	var wc io.WriteCloser
-	sw := NewSizeCountWriter(resw)
-	if out.ZFlag {
-		resw.Header().Set("Vary", "Accept-Encoding")
-		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-			// gzip圧縮
-			resw.Header().Set("Content-Encoding", "gzip")
-			wc, _ = gzip.NewWriterLevel(sw, gzip.BestSpeed)
-		} else {
-			// 圧縮しない
-			wc = sw
-		}
-	} else {
-		// 生データ
-		wc = sw
-	}
-	// ステータスコード＆ヘッダー出力
-	resw.WriteHeader(out.Code)
-	return wc, sw
-}
-
-func HtmlOutputParam(ct string) Output {
-	h := http.Header{}
-	h.Set("Content-Type", ct)
-	return Output{
-		Code:   200,
-		Header: h,
-		ZFlag:  true,
-	}
-}
-
-type Size interface {
-	Size() int
-}
-
-type sizeCountWriter struct {
-	w io.Writer
-	s int
-}
-
-func NewSizeCountWriter(w io.Writer) *sizeCountWriter {
-	return &sizeCountWriter{w: w}
-}
-
-func (scw *sizeCountWriter) Write(p []byte) (n int, err error) {
-	n, err = scw.w.Write(p)
-	scw.s += n
-	return
-}
-func (_ *sizeCountWriter) Close() error {
-	return nil
-}
-func (scw *sizeCountWriter) Size() int {
-	return scw.s
 }
