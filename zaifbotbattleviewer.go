@@ -17,6 +17,7 @@ import (
 	"github.com/NYTimes/gziphandler"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 type PriceAmount [2]float64
@@ -122,165 +123,178 @@ func init() {
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	reqch := make(chan Request, 8)
+	sch := make(chan StreamPacket, 32)
+	storesch := make(chan StoreDataPacket, 32)
+	for key, u := range zaifStremUrlList {
+		go streamReaderProc(u, key, sch)
+	}
+	go streamStoreProc(sch, storesch, reqch)
+	go storeWriterProc(storesch)
+
 	nh := BBHandler{
 		fs:    http.FileServer(http.Dir("./public_html")),
 		reqch: reqch,
 	}
-	server := &http.Server{
+	gnh := gziphandler.MustNewGzipLevelHandler(gzip.BestSpeed)(&nh)
+	serverLocal := &http.Server{
 		Addr:    ":8080",
-		Handler: gziphandler.MustNewGzipLevelHandler(gzip.BestSpeed)(&nh),
+		Handler: gnh,
 	}
-	sch := make(chan StreamPacket, 32)
-	storesch := make(chan StoreDataPacket, 32)
-	for key, u := range zaifStremUrlList {
-		go func(wss, key string, wsch chan<- StreamPacket) {
-			wait := time.Duration(rand.Uint64()%5000) * time.Millisecond
-			for {
-				time.Sleep(wait)
-				log.Infow("Websoket接続", "path", wss)
-				err := func() error {
-					con, _, err := websocket.DefaultDialer.Dial(wss, nil)
-					if err != nil {
-						return err
-					}
-					defer con.Close()
-					for {
-						s := Stream{}
-						err = con.ReadJSON(&s)
-						if err != nil {
-							return err
-						}
-						wsch <- StreamPacket{
-							name: key,
-							s:    s,
-						}
-					}
-					return nil
-				}()
-				if err != nil {
-					log.Infow("websocket通信に失敗しました。", "error", err, "url", wss, "key", key)
-				} else {
-					log.Infow("websocket通信が正常終了しました。", "url", wss, "key", key)
-				}
-				if wait < 180*time.Second {
-					wait *= 2
-					wait += time.Duration(rand.Uint64() % 5000)
-				}
+	server := &http.Server{
+		Handler: gnh,
+	}
+	// サーバ起動
+	go serverLocal.ListenAndServe()
+	log.Fatal(server.Serve(autocert.NewListener("crypto.unko.in")))
+}
+
+func streamReaderProc(wss, key string, wsch chan<- StreamPacket) {
+	wait := time.Duration(rand.Uint64()%5000) * time.Millisecond
+	for {
+		time.Sleep(wait)
+		log.Infow("Websoket接続", "path", wss)
+		err := func() error {
+			con, _, err := websocket.DefaultDialer.Dial(wss, nil)
+			if err != nil {
+				return err
 			}
-		}(u, key, sch)
-	}
-	go func(rsch <-chan StreamPacket, wsch chan<- StoreDataPacket, reqch <-chan Request) {
-		slm := make(map[string][]StoreData, 8)
-		oldstream := make(map[string]Stream, 8)
-		now := time.Now()
-		for key, _ := range zaifStremUrlList {
-			err := func(key string) error {
-				p := createStoreFilePath(now, key)
-				fp, err := os.Open(p)
+			defer con.Close()
+			for {
+				s := Stream{}
+				err = con.ReadJSON(&s)
 				if err != nil {
 					return err
 				}
-				defer fp.Close()
-				sl := []StoreData{}
-				scanner := bufio.NewScanner(fp)
-				for scanner.Scan() {
-					sd := StoreData{}
-					err := json.Unmarshal(scanner.Bytes(), &sd)
-					if err != nil {
-						log.Infow("JSON解析失敗", "error", err, "json", scanner.Text())
-						continue
-					}
-					sl = append(sl, sd)
+				wsch <- StreamPacket{
+					name: key,
+					s:    s,
 				}
-				slm[key] = sl
-				return nil
-			}(key)
+			}
+			return nil
+		}()
+		if err != nil {
+			log.Infow("websocket通信に失敗しました。", "error", err, "url", wss, "key", key)
+		} else {
+			log.Infow("websocket通信が正常終了しました。", "url", wss, "key", key)
+		}
+		if wait < 180*time.Second {
+			wait *= 2
+			wait += time.Duration(rand.Uint64() % 5000)
+		}
+	}
+}
+
+func streamStoreProc(rsch <-chan StreamPacket, wsch chan<- StoreDataPacket, reqch <-chan Request) {
+	slm := make(map[string][]StoreData, 8)
+	oldstream := make(map[string]Stream, 8)
+	now := time.Now()
+	for key, _ := range zaifStremUrlList {
+		sl, err := storeReaderProc(now, key)
+		if err != nil {
+			log.Infow("ファイル読み込み失敗", "error", err)
+		}
+		slm[key] = sl
+	}
+	for {
+		select {
+		case it := <-rsch:
+			sl, ok := appendStore(slm[it.name], it.s, oldstream[it.name])
+			slm[it.name] = sl
+			oldstream[it.name] = it.s
+			if ok {
+				wsch <- StoreDataPacket{
+					name: it.name,
+					sd:   slm[it.name][len(slm[it.name])-1],
+				}
+			}
+		case it := <-reqch:
+			if sl, ok := slm[it.name]; ok {
+				if it.filter != nil {
+					sl = it.filter(sl)
+				}
+				it.wch <- Result{
+					err: nil,
+					sl:  sl,
+				}
+			} else {
+				it.wch <- Result{
+					err: errors.New("存在しないキーです。"),
+				}
+			}
+		}
+	}
+}
+
+func storeReaderProc(now time.Time, key string) ([]StoreData, error) {
+	p := createStoreFilePath(now, key)
+	fp, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer fp.Close()
+	sl := []StoreData{}
+	scanner := bufio.NewScanner(fp)
+	for scanner.Scan() {
+		sd := StoreData{}
+		err := json.Unmarshal(scanner.Bytes(), &sd)
+		if err != nil {
+			log.Infow("JSON解析失敗", "error", err, "json", scanner.Text())
+			continue
+		}
+		sl = append(sl, sd)
+	}
+	return sl, nil
+}
+
+func storeWriterProc(rsch <-chan StoreDataPacket) {
+	old := time.Now()
+	tc := time.NewTicker(time.Second)
+	m := make(map[string]StoreItem, 8)
+	for {
+		select {
+		case it := <-rsch:
+			si, ok := m[it.name]
+			if !ok {
+				p := createStoreFilePath(old, it.name)
+				fp, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
+				if err != nil {
+					log.Infow("JSONファイル生成に失敗しました。", "error", err, "path", p)
+				}
+				si = StoreItem{
+					name: it.name,
+					w:    bufio.NewWriterSize(fp, 16*1024),
+					fp:   fp,
+				}
+				m[it.name] = si
+			}
+			err := json.NewEncoder(si.w).Encode(it.sd)
 			if err != nil {
-				log.Infow("ファイル読み込み失敗", "error", err)
+				log.Infow("JSONファイル出力に失敗しました。", "error", err)
 			}
-		}
-		for {
-			select {
-			case it := <-rsch:
-				sl, ok := appendStore(slm[it.name], it.s, oldstream[it.name])
-				slm[it.name] = sl
-				oldstream[it.name] = it.s
-				if ok {
-					wsch <- StoreDataPacket{
-						name: it.name,
-						sd:   slm[it.name][len(slm[it.name])-1],
-					}
-				}
-			case it := <-reqch:
-				if sl, ok := slm[it.name]; ok {
-					if it.filter != nil {
-						sl = it.filter(sl)
-					}
-					it.wch <- Result{
-						err: nil,
-						sl:  sl,
-					}
-				} else {
-					it.wch <- Result{
-						err: errors.New("存在しないキーです。"),
-					}
-				}
-			}
-		}
-	}(sch, storesch, reqch)
-	go func(rsch <-chan StoreDataPacket) {
-		old := time.Now()
-		tc := time.NewTicker(time.Second)
-		m := make(map[string]StoreItem, 8)
-		for {
-			select {
-			case it := <-rsch:
-				si, ok := m[it.name]
-				if !ok {
-					p := createStoreFilePath(old, it.name)
-					fp, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
+		case now := <-tc.C:
+			if now.Day() != old.Day() {
+				for key, it := range m {
+					it.w.Flush()
+					it.fp.Close()
+					p := createStoreFilePath(now, key)
+					fp, err := os.Create(p)
 					if err != nil {
 						log.Infow("JSONファイル生成に失敗しました。", "error", err, "path", p)
 					}
-					si = StoreItem{
-						name: it.name,
-						w:    bufio.NewWriterSize(fp, 16*1024),
-						fp:   fp,
-					}
-					m[it.name] = si
+					it.fp = fp
+					it.w.Reset(fp)
+					m[key] = it
 				}
-				err := json.NewEncoder(si.w).Encode(it.sd)
-				if err != nil {
-					log.Infow("JSONファイル出力に失敗しました。", "error", err)
-				}
-			case now := <-tc.C:
-				if now.Day() != old.Day() {
-					for key, it := range m {
-						it.w.Flush()
-						it.fp.Close()
-						p := createStoreFilePath(now, key)
-						fp, err := os.Create(p)
-						if err != nil {
-							log.Infow("JSONファイル生成に失敗しました。", "error", err, "path", p)
-						}
-						it.fp = fp
-						it.w.Reset(fp)
-						m[key] = it
-					}
-					old = now
-				}
-				if uint64(now.Unix())%30 == 0 {
-					// 定期的に保存する
-					for _, it := range m {
-						it.w.Flush()
-					}
+				old = now
+			}
+			if uint64(now.Unix())%30 == 0 {
+				// 定期的に保存する
+				for _, it := range m {
+					it.w.Flush()
 				}
 			}
 		}
-	}(storesch)
-
-	// サーバ起動
-	log.Fatal(server.ListenAndServe())
+	}
 }
 
 func createStoreFilePath(date time.Time, name string) string {
