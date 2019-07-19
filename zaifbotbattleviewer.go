@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,8 +11,10 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/NYTimes/gziphandler"
@@ -125,11 +128,13 @@ func main() {
 	reqch := make(chan Request, 8)
 	sch := make(chan StreamPacket, 32)
 	storesch := make(chan StoreDataPacket, 32)
+	ctx := context.Background()
+	pctx := startSignalProc(ctx)
 	for key, u := range zaifStremUrlList {
-		go streamReaderProc(u, key, sch)
+		go streamReaderProc(pctx, u, key, sch)
 	}
-	go streamStoreProc(sch, storesch, reqch)
-	go storeWriterProc(storesch)
+	go streamStoreProc(pctx, sch, storesch, reqch)
+	go storeWriterProc(pctx, storesch)
 
 	nh := BBHandler{
 		fs:    http.FileServer(http.Dir("./public_html")),
@@ -148,13 +153,41 @@ func main() {
 	log.Fatal(server.Serve(autocert.NewListener("crypto.unko.in")))
 }
 
-func streamReaderProc(wss, key string, wsch chan<- StreamPacket) {
+func startSignalProc(ctx context.Context) context.Context {
+	pctx, cancelParent := context.WithCancel(ctx)
+	go func() {
+		defer cancelParent()
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig,
+			syscall.SIGHUP,
+			syscall.SIGINT,
+			syscall.SIGTERM,
+			syscall.SIGQUIT,
+		)
+		defer signal.Stop(sig)
+
+		select {
+		case <-pctx.Done():
+			log.Infow("Cancel from parent")
+		case s := <-sig:
+			switch s {
+			case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
+				log.Infow("Signal!!", "signal", s)
+			}
+		}
+	}()
+	return pctx
+}
+
+func streamReaderProc(ctx context.Context, wss, key string, wsch chan<- StreamPacket) {
 	wait := time.Duration(rand.Uint64()%5000) * time.Millisecond
 	for {
 		time.Sleep(wait)
 		log.Infow("Websoket接続", "path", wss)
 		err := func() error {
-			con, _, err := websocket.DefaultDialer.Dial(wss, nil)
+			child, cancelChild := context.WithCancel(ctx)
+			defer cancelChild()
+			con, _, err := websocket.DefaultDialer.DialContext(child, wss, nil)
 			if err != nil {
 				return err
 			}
@@ -181,10 +214,16 @@ func streamReaderProc(wss, key string, wsch chan<- StreamPacket) {
 			wait *= 2
 			wait += time.Duration(rand.Uint64() % 5000)
 		}
+		select {
+		case <-ctx.Done():
+			log.Infow("streamReaderProc終了")
+			return
+		default:
+		}
 	}
 }
 
-func streamStoreProc(rsch <-chan StreamPacket, wsch chan<- StoreDataPacket, reqch <-chan Request) {
+func streamStoreProc(ctx context.Context, rsch <-chan StreamPacket, wsch chan<- StoreDataPacket, reqch <-chan Request) {
 	slm := make(map[string][]StoreData, 8)
 	oldstream := make(map[string]Stream, 8)
 	now := time.Now()
@@ -197,6 +236,9 @@ func streamStoreProc(rsch <-chan StreamPacket, wsch chan<- StoreDataPacket, reqc
 	}
 	for {
 		select {
+		case <-ctx.Done():
+			log.Infow("streamStoreProc終了")
+			return
 		case it := <-rsch:
 			sl, ok := appendStore(slm[it.name], it.s, oldstream[it.name])
 			slm[it.name] = sl
@@ -246,12 +288,19 @@ func storeReaderProc(now time.Time, key string) ([]StoreData, error) {
 	return sl, nil
 }
 
-func storeWriterProc(rsch <-chan StoreDataPacket) {
+func storeWriterProc(ctx context.Context, rsch <-chan StoreDataPacket) {
 	old := time.Now()
 	tc := time.NewTicker(time.Second)
 	m := make(map[string]StoreItem, 8)
 	for {
 		select {
+		case <-ctx.Done():
+			for _, it := range m {
+				it.w.Flush()
+				it.fp.Close()
+			}
+			log.Infow("storeWriterProc終了")
+			return
 		case it := <-rsch:
 			si, ok := m[it.name]
 			if !ok {
