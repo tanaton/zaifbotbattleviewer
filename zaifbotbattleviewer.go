@@ -86,7 +86,9 @@ type StoreDataPacket struct {
 	sd   StoreData
 }
 type StoreItem struct {
+	date time.Time
 	name string
+	gw   *gzip.Writer
 	w    *bufio.Writer
 	fp   *os.File
 }
@@ -269,14 +271,13 @@ func streamStoreProc(ctx context.Context, rsch <-chan StreamPacket, wsch chan<- 
 }
 
 func storeReaderProc(now time.Time, key string) ([]StoreData, error) {
-	p := createStoreFilePath(now, key)
-	fp, err := os.Open(p)
+	sir, err := NewStoreItemReader(now, key)
 	if err != nil {
 		return nil, err
 	}
-	defer fp.Close()
+	defer sir.Close()
 	sl := []StoreData{}
-	scanner := bufio.NewScanner(fp)
+	scanner := bufio.NewScanner(sir)
 	for scanner.Scan() {
 		sd := StoreData{}
 		err := json.Unmarshal(scanner.Bytes(), &sd)
@@ -294,13 +295,12 @@ func storeWriterProc(ctx context.Context, rsch <-chan StoreDataPacket) {
 	defer cancel()
 	old := time.Now()
 	tc := time.NewTicker(time.Second)
-	m := make(map[string]StoreItem, 8)
+	m := make(map[string]*StoreItem, 8)
 	for {
 		select {
 		case <-cctx.Done():
 			for _, it := range m {
-				it.w.Flush()
-				it.fp.Close()
+				it.Close()
 			}
 			log.Infow("storeWriterProc終了")
 			log.Sync()
@@ -309,16 +309,13 @@ func storeWriterProc(ctx context.Context, rsch <-chan StoreDataPacket) {
 		case it := <-rsch:
 			si, ok := m[it.name]
 			if !ok {
-				p := createStoreFilePath(old, it.name)
-				fp, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
+				var err error
+				si, err = NewStoreItem(old, it.name)
 				if err != nil {
-					log.Infow("JSONファイル生成に失敗しました。", "error", err, "path", p)
+					log.Infow("JSONファイル生成に失敗しました。", "error", err, "name", it.name)
+					break
 				}
-				si = StoreItem{
-					name: it.name,
-					w:    bufio.NewWriterSize(fp, 16*1024),
-					fp:   fp,
-				}
+				_ = si.readData()
 				m[it.name] = si
 			}
 			err := json.NewEncoder(si.w).Encode(it.sd)
@@ -328,31 +325,111 @@ func storeWriterProc(ctx context.Context, rsch <-chan StoreDataPacket) {
 		case now := <-tc.C:
 			if now.Day() != old.Day() {
 				for key, it := range m {
-					it.w.Flush()
-					it.fp.Close()
-					p := createStoreFilePath(now, key)
-					fp, err := os.Create(p)
+					it.Close()
+					err := it.reset(now, key)
 					if err != nil {
-						log.Infow("JSONファイル生成に失敗しました。", "error", err, "path", p)
+						log.Infow("JSONファイル生成に失敗しました。", "error", err, "name", key)
+						break
 					}
-					it.fp = fp
-					it.w.Reset(fp)
-					m[key] = it
 				}
 				old = now
 			}
 			if uint64(now.Unix())%30 == 0 {
 				// 定期的に保存する
 				for _, it := range m {
-					it.w.Flush()
+					it.Flush()
 				}
 			}
 		}
 	}
 }
 
+func NewStoreItem(date time.Time, name string) (*StoreItem, error) {
+	si := &StoreItem{}
+	si.date = date
+	si.name = name
+	p := si.createPathTmp()
+	fp, err := os.Create(p)
+	if err != nil {
+		return nil, err
+	}
+	si.gw, _ = gzip.NewWriterLevel(fp, gzip.BestSpeed)
+	si.w = bufio.NewWriterSize(si.gw, 16*1024)
+	si.fp = fp
+	return si, nil
+}
+
+func (si *StoreItem) reset(date time.Time, name string) error {
+	p := si.createPathTmp()
+	fp, err := os.Create(p)
+	if err != nil {
+		return err
+	}
+	si.date = date
+	si.name = name
+	si.fp = fp
+	si.gw.Reset(si.fp)
+	si.w.Reset(si.gw)
+	return nil
+}
+
+func (si *StoreItem) readData() error {
+	sir, err := NewStoreItemReader(si.date, si.name)
+	if err != nil {
+		return err
+	}
+	defer sir.Close()
+	_, err = io.Copy(si.w, sir)
+	return err
+}
+
+func (si *StoreItem) Flush() error {
+	return si.w.Flush()
+}
+
+func (si *StoreItem) Close() error {
+	si.Flush()
+	si.gw.Close()
+	si.fp.Close()
+	n := createStoreFilePath(si.date, si.name)
+	o := si.createPathTmp()
+	return os.Rename(o, n)
+}
+
+func (si *StoreItem) createPathTmp() string {
+	return createStoreFilePath(si.date, si.name) + ".tmp"
+}
+
 func createStoreFilePath(date time.Time, name string) string {
-	return filepath.Join("data", fmt.Sprintf("%s_%s.json", date.Format("20060102"), name))
+	return filepath.Join("data", fmt.Sprintf("%s_%s.json.gz", date.Format("20060102"), name))
+}
+
+type StoreItemReader struct {
+	fp *os.File
+	gr *gzip.Reader
+}
+
+func NewStoreItemReader(date time.Time, name string) (*StoreItemReader, error) {
+	sir := &StoreItemReader{}
+	p := createStoreFilePath(date, name)
+	var err error
+	sir.fp, err = os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	sir.gr, err = gzip.NewReader(sir.fp)
+	if err != nil {
+		sir.fp.Close()
+		return nil, err
+	}
+	return sir, nil
+}
+func (sir *StoreItemReader) Read(p []byte) (n int, err error) {
+	return sir.gr.Read(p)
+}
+func (sir *StoreItemReader) Close() error {
+	sir.gr.Close()
+	return sir.fp.Close()
 }
 
 func IsCancel(ctx context.Context) (ret bool) {
