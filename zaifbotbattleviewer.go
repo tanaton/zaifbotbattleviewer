@@ -128,8 +128,7 @@ func main() {
 	reqch := make(chan Request, 8)
 	sch := make(chan StreamPacket, 32)
 	storesch := make(chan StoreDataPacket, 32)
-	ctx := context.Background()
-	pctx := startSignalProc(ctx)
+	pctx := startSignalProc(context.Background())
 	for key, u := range zaifStremUrlList {
 		go streamReaderProc(pctx, u, key, sch)
 	}
@@ -180,14 +179,16 @@ func startSignalProc(ctx context.Context) context.Context {
 }
 
 func streamReaderProc(ctx context.Context, wss, key string, wsch chan<- StreamPacket) {
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	wait := time.Duration(rand.Uint64()%5000) * time.Millisecond
 	for {
 		time.Sleep(wait)
 		log.Infow("Websoket接続", "path", wss)
 		err := func() error {
-			child, cancelChild := context.WithCancel(ctx)
+			ccctx, cancelChild := context.WithCancel(cctx)
 			defer cancelChild()
-			con, _, err := websocket.DefaultDialer.DialContext(child, wss, nil)
+			con, _, err := websocket.DefaultDialer.DialContext(ccctx, wss, nil)
 			if err != nil {
 				return err
 			}
@@ -205,6 +206,10 @@ func streamReaderProc(ctx context.Context, wss, key string, wsch chan<- StreamPa
 			}
 			return nil
 		}()
+		if IsCancel(cctx) {
+			log.Infow("streamReaderProc終了")
+			return
+		}
 		if err != nil {
 			log.Infow("websocket通信に失敗しました。", "error", err, "url", wss, "key", key)
 		} else {
@@ -214,16 +219,12 @@ func streamReaderProc(ctx context.Context, wss, key string, wsch chan<- StreamPa
 			wait *= 2
 			wait += time.Duration(rand.Uint64() % 5000)
 		}
-		select {
-		case <-ctx.Done():
-			log.Infow("streamReaderProc終了")
-			return
-		default:
-		}
 	}
 }
 
 func streamStoreProc(ctx context.Context, rsch <-chan StreamPacket, wsch chan<- StoreDataPacket, reqch <-chan Request) {
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	slm := make(map[string][]StoreData, 8)
 	oldstream := make(map[string]Stream, 8)
 	now := time.Now()
@@ -236,7 +237,7 @@ func streamStoreProc(ctx context.Context, rsch <-chan StreamPacket, wsch chan<- 
 	}
 	for {
 		select {
-		case <-ctx.Done():
+		case <-cctx.Done():
 			log.Infow("streamStoreProc終了")
 			return
 		case it := <-rsch:
@@ -289,17 +290,21 @@ func storeReaderProc(now time.Time, key string) ([]StoreData, error) {
 }
 
 func storeWriterProc(ctx context.Context, rsch <-chan StoreDataPacket) {
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	old := time.Now()
 	tc := time.NewTicker(time.Second)
 	m := make(map[string]StoreItem, 8)
 	for {
 		select {
-		case <-ctx.Done():
+		case <-cctx.Done():
 			for _, it := range m {
 				it.w.Flush()
 				it.fp.Close()
 			}
 			log.Infow("storeWriterProc終了")
+			log.Sync()
+			os.Exit(1)
 			return
 		case it := <-rsch:
 			si, ok := m[it.name]
@@ -348,6 +353,16 @@ func storeWriterProc(ctx context.Context, rsch <-chan StoreDataPacket) {
 
 func createStoreFilePath(date time.Time, name string) string {
 	return filepath.Join("data", fmt.Sprintf("%s_%s.json", date.Format("20060102"), name))
+}
+
+func IsCancel(ctx context.Context) (ret bool) {
+	select {
+	case <-ctx.Done():
+		ret = true
+	default:
+		ret = false
+	}
+	return
 }
 
 func appendStore(sl []StoreData, s, olds Stream) ([]StoreData, bool) {
