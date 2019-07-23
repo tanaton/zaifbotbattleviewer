@@ -953,7 +953,7 @@ class Client {
 	}
 }
 
-let dispdata: Display = {
+var dispdata: Display = {
 	last_trade: {
 		price: "0",
 		action: "▲",
@@ -987,7 +987,7 @@ let dispdata: Display = {
 		eth_jpy: {name: "eth/jpy", hash: "#eth_jpy", active: ""}
 	}
 };
-let vm = new Vue({
+var vm = new Vue({
 	el: "#container",
 	data: dispdata,
 	watch: {
@@ -996,7 +996,7 @@ let vm = new Vue({
 		}
 	}
 });
-let cli = new Client(location.hash);
+var cli = new Client(location.hash);
 window.addEventListener("hashchange", (ev) => {
 	if(cli != null){
 		cli.dispose();

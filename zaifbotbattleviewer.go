@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -499,10 +500,10 @@ func (bbh *BBHandler) getStoreData(name string) []StoreData {
 }
 
 func (bbh *BBHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch r.URL.Path {
-	case "/api/1/oldstream/btc_jpy", "/api/1/oldstream/xem_jpy", "/api/1/oldstream/mona_jpy", "/api/1/oldstream/bch_jpy", "/api/1/oldstream/eth_jpy":
+	switch {
+	case strings.Index(r.URL.Path, "/api/zaif/1/oldstream/") == 0:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		err := json.NewEncoder(w).Encode(bbh.getStoreData(r.URL.Path[17:]))
+		err := json.NewEncoder(w).Encode(bbh.getStoreData(strings.TrimLeft(r.URL.Path, "/api/zaif/1/oldstream/")))
 		if err != nil {
 			log.Infow("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
 		}
