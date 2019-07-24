@@ -15,6 +15,11 @@ type Box = {
 	left: number;
 }
 
+type Signal = "Asks" | "Bids" | "LastPrice";
+function isSignal(a: any): a is Signal {
+	return true;
+}
+
 type TradeView = {
 	trade_type: string;
 	direction: string;
@@ -63,20 +68,20 @@ type ZaifStream = {
 type Stream = {
 	Name: string;
 	Date: Date;
-	Signals: {
-		Asks: {
+	Signals?: {
+		Asks?: {
 			Data: number;
 		};
-		Bids: {
+		Bids?: {
 			Data: number;
 		};
-		LastPrice: {
+		LastPrice?: {
 			Data: number;
 		};
 	};
-	Depths: {
-		Asks: number[][],
-		Bids: number[][]
+	Depths?: {
+		Asks?: number[][],
+		Bids?: number[][]
 	};
 }
 
@@ -88,11 +93,6 @@ type ChartContextData = {
 type ChartDepthData = {
 	price: number;
 	depth: number;
-}
-
-type Signal = "Asks" | "Bids" | "LastPrice";
-function isSignal(a: any): a is Signal {
-	return true;
 }
 
 type Context = {
@@ -156,54 +156,59 @@ class Graph {
 	private tid: number = 0;
 	private rid: number = 0;
 
-	public svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any>;
-	public focus: d3.Selection<SVGGElement, Context, SVGSVGElement, unknown>;
-	public focus_legend: d3.Selection<SVGGElement, Legend, SVGSVGElement, unknown>;
-	public context: d3.Selection<SVGGElement, Context, SVGSVGElement, unknown>;
-	public depth: d3.Selection<SVGGElement, Depth, SVGSVGElement, unknown>;
-	public depth_area: d3.Selection<SVGGElement, Depth, SVGSVGElement, unknown>;
+	private svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any>;
+	private focus: d3.Selection<SVGGElement, Context, SVGSVGElement, unknown>;
+	private focus_legend: d3.Selection<SVGGElement, Legend, SVGSVGElement, unknown>;
+	private context: d3.Selection<SVGGElement, Context, SVGSVGElement, unknown>;
+	private depth: d3.Selection<SVGGElement, Depth, SVGSVGElement, unknown>;
+	private depth_area: d3.Selection<SVGGElement, Depth, SVGSVGElement, unknown>;
 
-	public focus_x: d3.ScaleTime<number, number>;
-	public focus_y: d3.ScaleLinear<number, number>;
-	public focus_xAxis: d3.Axis<Date>;
-	public focus_yAxis: d3.Axis<number | { valueOf(): number; }>;
-	public focus_line: d3.Line<ChartContextData>;
-	public focus_path_d: (d: Context) => string | null;
+	private focus_x: d3.ScaleTime<number, number>;
+	private focus_y: d3.ScaleLinear<number, number>;
+	private focus_xAxis: d3.Axis<Date>;
+	private focus_yAxis: d3.Axis<number | { valueOf(): number; }>;
+	private focus_line: d3.Line<ChartContextData>;
+	private focus_path_d: (d: Context) => string | null;
 
-	public context_x: d3.ScaleTime<number, number>;
-	public context_y: d3.ScaleLinear<number, number>;
-	public context_xAxis: d3.Axis<Date>;
-	public context_yAxis: d3.Axis<number | { valueOf(): number; }>;
-	public context_line: d3.Line<ChartContextData>;
-	public context_path_d: (d: Context) => string | null;
+	private context_x: d3.ScaleTime<number, number>;
+	private context_y: d3.ScaleLinear<number, number>;
+	private context_xAxis: d3.Axis<Date>;
+	private context_yAxis: d3.Axis<number | { valueOf(): number; }>;
+	private context_line: d3.Line<ChartContextData>;
+	private context_path_d: (d: Context) => string | null;
 
-	public depth_x: d3.ScaleLinear<number, number>;
-	public depth_y: d3.ScaleLinear<number, number>;
-	public depth_xAxis: d3.Axis<number | { valueOf(): number; }>;
-	public depth_yAxis: d3.Axis<number>;
-	public depth_line: d3.Line<ChartDepthData>;
-	public depth_path_d: (d: Depth) => string | null;
-	public depth_line_area: d3.Area<ChartDepthData>;
-	public depth_area_d: (d: Depth) => string | null;
+	private depth_x: d3.ScaleLinear<number, number>;
+	private depth_y: d3.ScaleLinear<number, number>;
+	private depth_xAxis: d3.Axis<number | { valueOf(): number; }>;
+	private depth_yAxis: d3.Axis<number>;
+	private depth_line: d3.Line<ChartDepthData>;
+	private depth_path_d: (d: Depth) => string | null;
+	private depth_line_area: d3.Area<ChartDepthData>;
+	private depth_area_d: (d: Depth) => string | null;
 
-	public context_color: d3.ScaleOrdinal<string, string>;
-	public context_path_stroke: (d: {name: string}) => string;
-	public focus_legend_transform: (d: Legend, i: number) => string;
-	public focus_legend_update: (d: Legend) => string;
+	private context_color: d3.ScaleOrdinal<string, string>;
+	private context_path_stroke: (d: {name: string}) => string;
+	private focus_legend_transform: (d: Legend, i: number) => string;
+	private focus_legend_update: (d: Legend) => string;
 
-	private focus_data: Context[];
-	private focus_data_legend: Legend[];
-	private context_data: Context[];
-	private depth_data: Depth[];
-
+	private focus_data: Context[] = [];
+	private focus_data_legend: Legend[] = [];
+	private context_data: Context[] = [];
+	private depth_data: Depth[] = [{
+		name: "Asks",
+		values: []
+	}, {
+		name: "Bids",
+		values: []
+	}];
 	private ydtmp: [ChartContextData, ChartContextData];
-	private datamap: {[s: string]: boolean};
+	private datamap: {[s: string]: boolean} = {};
 
-	private draw_focus: boolean;
-	private draw_context: boolean;
-	private draw_depth: boolean;
-	private focus_domain_yaxis_update: boolean;
-	private focus_xaxis_sec: number;
+	private draw_focus: boolean = false;
+	private draw_context: boolean = false;
+	private draw_depth: boolean = false;
+	private focus_domain_yaxis_update: boolean = false;
+	private focus_xaxis_sec: number = 120;
 
 	constructor(obj: Stream) {
 		this.focus_width = 850 - this.focus_margin.left - this.focus_margin.right;
@@ -212,18 +217,6 @@ class Graph {
 		this.context_height = 620 - this.context_margin.top - this.context_margin.bottom;
 		this.depth_width = 850 - this.depth_margin.left - this.depth_margin.right;
 		this.depth_height = 760 - this.depth_margin.top - this.depth_margin.bottom;
-
-		this.focus_data = [];
-		this.focus_data_legend = [];
-		this.context_data = [];
-		this.depth_data = [{
-			name: "Asks",
-			values: []
-		}, {
-			name: "Bids",
-			values: []
-		}];
-		this.datamap = {};
 		this.ydtmp = [{
 			date: obj.Date,
 			data: 10000000
@@ -231,11 +224,6 @@ class Graph {
 			date: obj.Date,
 			data: -10000000
 		}];
-		this.draw_focus = false;
-		this.draw_context = false;
-		this.draw_depth = false;
-		this.focus_xaxis_sec = 120;
-		this.focus_domain_yaxis_update = false;
 
 		this.focus_x = d3.scaleTime()
 			.domain([0, 0])
@@ -327,9 +315,9 @@ class Graph {
 		this.text_update = d => d.name + " " + d.values[d.values.length - 1].data;
 */
 		this.focus_legend_transform = (d: Legend, i: number): string => {
-			return "translate(" + ((i * 150) + 66) + ",0)";
+			return `translate(${(i * 150) + 66},0)`;
 		}
-		this.focus_legend_update = (d: Legend): string => d.name + " " + d.last_price.toLocaleString();
+		this.focus_legend_update = (d: Legend): string => `${d.name} ${d.last_price.toLocaleString()}`;
 
 		// オブジェクト構築
 		this.init(obj);
@@ -342,7 +330,7 @@ class Graph {
 		this.focus = this.svg.selectAll(".focus")
 			.data(this.focus_data)
 			.enter().append("g")
-			.attr("transform", "translate(" + this.focus_margin.left + "," + this.focus_margin.top + ")")
+			.attr("transform", `translate(${this.focus_margin.left},${this.focus_margin.top})`)
 			.attr("class", "focus");
 
 		this.focus_legend = this.svg.selectAll(".focus-legend")
@@ -354,19 +342,19 @@ class Graph {
 		this.context = this.svg.selectAll(".context")
 			.data(this.context_data)
 			.enter().append("g")
-			.attr("transform", "translate(" + this.context_margin.left + "," + this.context_margin.top + ")")
+			.attr("transform", `translate(${this.context_margin.left},${this.context_margin.top})`)
 			.attr("class", "context");
 
 		this.depth = this.svg.selectAll(".depth")
 			.data(this.depth_data)
 			.enter().append("g")
-			.attr("transform", "translate(" + this.depth_margin.left + "," + this.depth_margin.top + ")")
+			.attr("transform", `translate(${this.depth_margin.left},${this.depth_margin.top})`)
 			.attr("class", "depth");
 
 		this.depth_area = this.svg.selectAll(".depth_area")
 			.data(this.depth_data)
 			.enter().append("g")
-			.attr("transform", "translate(" + this.depth_margin.left + "," + this.depth_margin.top + ")")
+			.attr("transform", `translate(${this.depth_margin.left},${this.depth_margin.top})`)
 			.attr("class", "depth_area");
 
 		this.focus.append("path")				// 拡大グラフ
@@ -375,7 +363,7 @@ class Graph {
 
 		this.focus.append("g") 					// x目盛軸
 			.attr("class", "x axis")
-			.attr("transform", "translate(0," + this.focus_height + ")")
+			.attr("transform", `translate(0,${this.focus_height})`)
 			.call(this.focus_xAxis);
 
 		this.focus.append("g")					// y目盛軸
@@ -410,7 +398,7 @@ class Graph {
 
 		this.context.append("g")				// 全体x目盛軸
 			.attr("class", "x axis")
-			.attr("transform", "translate(0," + this.context_height + ")")
+			.attr("transform", `translate(0,${this.context_height})`)
 			.call(this.context_xAxis);
 
 		this.context.append("g")				// 全体y目盛軸
@@ -428,7 +416,7 @@ class Graph {
 
 		this.depth.append("g") 					// 深さx目盛軸
 			.attr("class", "x axis")
-			.attr("transform", "translate(0," + this.depth_height + ")")
+			.attr("transform", `translate(0,${this.depth_height})`)
 			.call(this.depth_xAxis);
 
 		this.depth.append("g")					// 深さy目盛軸
@@ -441,18 +429,17 @@ class Graph {
 		//this.addContext(data);
 		//this.addDepth(data);
 
-		this.tid = window.setInterval(() => {
-			let data: Stream = {
+		this.tid = window.setInterval((): void => {
+			const data: Stream = {
 				Name: "",
 				Date: new Date(),
-				Signals: {Asks: {Data: 0}, Bids: {Data: 0}, LastPrice: {Data: 0}},
-				Depths: {Asks: [[0]], Bids:[[0]]}
+				Signals: {}
 			};
 			let flag = false;
 			const l = this.focus_data.length;
 			for(let i = 0; i < l; i++){
 				let it = this.focus_data[i];
-				if(it.values.length > 0){
+				if(it.values.length > 0 && data.Signals !== undefined){
 					data.Signals[it.name] = {
 						Data: it.values[it.values.length - 1].data
 					};
@@ -472,17 +459,18 @@ class Graph {
 		if(this.rid){
 			window.cancelAnimationFrame(this.rid);
 		}
-		let doc = document.getElementById(svgID);
+		const doc = document.getElementById(svgID);
 		if(doc){
 			doc.innerHTML = "";
 		}
 	}
-	public addsig(data: Stream): boolean {
+	private addsig(data: Stream): boolean {
 		const date = data.Date;
 		const sigs = data.Signals;
 		let ret = false;
 		for(const key in sigs){
 			if(isSignal(key) && sigs.hasOwnProperty(key) && (this.datamap[key] == null)){
+				const data = (sigs[key] || {Data: 0}).Data;
 				let context_color = this.context_color.domain();
 				context_color.push(key);
 				this.context_color.domain(context_color);
@@ -490,7 +478,7 @@ class Graph {
 					name: key,
 					values: [{
 						date: date,
-						data: sigs[key].Data
+						data: data
 					}]
 				});
 				this.focus_data_legend.push({
@@ -501,7 +489,7 @@ class Graph {
 					name: key,
 					values: [{
 						date: date,
-						data: sigs[key].Data
+						data: data
 					}]
 				});
 				this.datamap[key] = true;
@@ -510,7 +498,7 @@ class Graph {
 		}
 		return ret;
 	}
-	public static appendData(data: Context, val: ChartContextData): boolean {
+	private static appendData(data: Context, val: ChartContextData): boolean {
 		let ret = false;
 		const old = data.values.length > 0 ? data.values[data.values.length - 1] : undefined;
 		// 点の数を減らす処理
@@ -534,25 +522,26 @@ class Graph {
 		const date = data.Date;
 		const datestart = new Date(Date.now() - (this.focus_xaxis_sec * 1000));
 		const l = this.focus_data.length;
-		const sigs = data.Signals;
+		const sigs = data.Signals || {};
 		for(let i = 0; i < l; i++){
-			let it = this.focus_data[i];
-			let it2 = this.context_data[i];
+			const it = this.focus_data[i];
+			const it2 = this.context_data[i];
 			const key = it.name;
 			if(sigs[key] !== undefined){
+				const d = (sigs[key] || {Data: 0}).Data;
 				Graph.appendData(it, {
 					date: date,
-					data: sigs[key].Data
+					data: d
 				});
 				this.draw_focus = true;
 				const update = Graph.appendData(it2, {
 					date: date,
-					data: sigs[key].Data
+					data: d
 				});
 				if(update || it2.values.length < 100){
 					this.draw_context = true;
 				}
-				this.focus_data_legend[i].last_price = sigs[key].Data;
+				this.focus_data_legend[i].last_price = d;
 				// データサイズが大きくなり過ぎないように調節
 				while(it.values.length > 2000){
 					it.values.shift();
@@ -568,48 +557,50 @@ class Graph {
 		this.updateContextDomain(data);
 	}
 	public addDepth(data: Stream): void {
-		const deps = data.Depths;
-		const alen = deps.Asks.length;
-		const blen = deps.Bids.length;
-		let asks: ChartDepthData[] = [];
-		let bids: ChartDepthData[] = [];
+		const deps = data.Depths || {};
+		const asks: ChartDepthData[] = [];
+		const bids: ChartDepthData[] = [];
 		let dep = 0;
-		asks.push({
-			price: deps.Asks[0][0],
-			depth: 0
-		});
-		for(let i = 0; i < alen; i++){
-			dep += deps.Asks[i][0] * deps.Asks[i][1];
+		if(deps.Asks){
 			asks.push({
-				price: deps.Asks[i][0],
-				depth: dep
+				price: deps.Asks[0][0],
+				depth: 0
 			});
+			for(const ask of deps.Asks){
+				dep += ask[0] * ask[1];
+				asks.push({
+					price: ask[0],
+					depth: dep
+				});
+			}
 		}
 		dep = 0;
-		bids.push({
-			price: deps.Bids[0][0],
-			depth: 0
-		});
-		for(let i = 0; i < blen; i++){
-			dep += deps.Bids[i][0] * deps.Bids[i][1];
+		if(deps.Bids){
 			bids.push({
-				price: deps.Bids[i][0],
-				depth: dep
+				price: deps.Bids[0][0],
+				depth: 0
 			});
+			for(const bid of deps.Bids){
+				dep += bid[0] * bid[1];
+				bids.push({
+					price: bid[0],
+					depth: dep
+				});
+			}
 		}
 		this.depth_data[0].values = asks;
 		this.depth_data[1].values = bids;
 		this.draw_depth = true;
 		this.updateDepthDomain();
 	}
-	public updateContextDomain(data: Stream): void {
+	private updateContextDomain(data: Stream): void {
 		const date = data.Date;
 		const datestart = new Date(+date - (this.focus_xaxis_sec * 1000));
 		const focus_xd = [datestart, date];
-		const sigs = data.Signals;
-		let context_xd = this.context_x.domain();
-		let context_yd = this.context_y.domain();
-		let ydtmp = this.ydtmp;
+		const sigs = data.Signals || {};
+		const context_xd = this.context_x.domain();
+		const context_yd = this.context_y.domain();
+		const ydtmp = this.ydtmp;
 	
 		context_xd[0] = date;
 		context_xd[1] = date;
@@ -618,7 +609,7 @@ class Graph {
 		for(let i = 0; i < l; i++){
 			const key = this.focus_data[i].name;
 			if(sigs[key] !== undefined){
-				const data = sigs[key].Data;
+				const data = (sigs[key] || {Data: 0}).Data;
 				if(ydtmp[0].data > data){
 					ydtmp[0].date = date;
 					ydtmp[0].data = data;
@@ -641,9 +632,8 @@ class Graph {
 		// 現在の最大最小が表示外になった場合
 		if(ydtmp[0].date < datestart || this.focus_domain_yaxis_update){
 			ydtmp[0].data = 10000000;
-			const datalen = this.focus_data.length;
-			for(let j = 0; j < datalen; j++){
-				let it = d3.min(this.focus_data[j].values, it => it.data) || 0;
+			for(const fd of this.focus_data){
+				let it = d3.min(fd.values, it => it.data) || 0;
 				if(ydtmp[0].data > it){
 					ydtmp[0].data = it;
 				}
@@ -651,9 +641,8 @@ class Graph {
 		}
 		if(ydtmp[1].date < datestart || this.focus_domain_yaxis_update){
 			ydtmp[1].data = -10000000;
-			const datalen = this.focus_data.length;
-			for(let j = 0; j < datalen; j++){
-				let it = d3.max(this.focus_data[j].values, it => it.data) || 0;
+			for(const fd of this.focus_data){
+				let it = d3.max(fd.values, it => it.data) || 0;
 				if(ydtmp[1].data < it){
 					ydtmp[1].data = it;
 				}
@@ -666,9 +655,9 @@ class Graph {
 		this.focus_y.domain([ydtmp[0].data, ydtmp[1].data]).nice();
 		this.context_y.domain(context_yd).nice();
 	}
-	public updateDepthDomain(): void {
-		let depth_xd = this.depth_x.domain();
-		let depth_yd = this.depth_y.domain();
+	private updateDepthDomain(): void {
+		const depth_xd = this.depth_x.domain();
+		const depth_yd = this.depth_y.domain();
 		const ydbidmax = d3.max(this.depth_data[1].values, it => it.depth) || 0;
 		const ydaskmax = d3.max(this.depth_data[0].values, it => it.depth) || 0;
 
@@ -705,7 +694,7 @@ class Graph {
 	public draw(): void {
 		if(this.drawing){
 			this.drawing = false;
-			this.rid = window.requestAnimationFrame((timestamp) => {
+			this.rid = window.requestAnimationFrame((): void => {
 				this.drawsub();
 			});
 		}
@@ -751,7 +740,7 @@ class Client {
 			console.log('接続しました。');
 		};
 		this.ws.onerror = (error) => {
-			console.error('WebSocket Error ' + error);
+			console.error(`WebSocket Error ${error}`);
 		};
 		this.ws.onclose = () => {
 			console.log('切断しました。');
@@ -768,20 +757,20 @@ class Client {
 			this.graph = undefined;
 		}
 	}
-	public static getCurrencyPair(hash: string = "#btc_jpy"): string {
+	private static getCurrencyPair(hash: string = "#btc_jpy"): string {
 		let cp = hash.slice(1);
 		if(currency_pair_list.find(data => data === cp) == undefined){
 			cp = currency_pair_list[0];
 		}
 		return cp
 	}
-	public getWebsocketURL(): string {
+	private getWebsocketURL(): string {
 		return streamBaseURL + this.currency_pair;
 	}
-	public static getDirection(action: string): string {
+	private static getDirection(action: string): string {
 		return action === "ask" ? "▼" : "▲";
 	}
-	public update(obj: ZaifStream){
+	private update(obj: ZaifStream){
 		const data: Stream = {
 			Name: obj.currency_pair,
 			Date: new Date(),
@@ -808,7 +797,7 @@ class Client {
 		// vue用
 		this.updateView(obj);
 	}
-	public updateView(obj: ZaifStream): void {
+	private updateView(obj: ZaifStream): void {
 		const cp = this.currency_pair.split("_");
 		for(const key in dispdata.currencys){
 			if(dispdata.currencys.hasOwnProperty(key)){
@@ -826,8 +815,7 @@ class Client {
 			+ ` (${dispdata.currency_pair.first}/${dispdata.currency_pair.second}) 取引の様子`
 			+ ` - zaifの取引情報を表示するやつ`;
 		const tr: TradeView[] = [];
-		for(let i = obj.trades.length - 1; i >= 0; i--){
-			const it = obj.trades[i];
+		for(const it of obj.trades.reverse()){
 			let dir = "";
 			if(tr.length === 0){
 				dir = Client.getDirection(it.trade_type);
@@ -852,15 +840,14 @@ class Client {
 		dispdata.asks = this.analyzeBoard(obj.asks);
 		dispdata.date_diff = (Date.parse(obj.timestamp) - Date.now()) / 1000;
 	}
-	public analyzeBoard(data: number[][]): Board[] {
+	private analyzeBoard(data: number[][]): Board[] {
 		let dep = 0;
 		const board: Board[] = [];
-		const len = data.length;
-		for(let i = 0; i < len; i++){
-			dep += data[i][0] * data[i][1];
+		for(const it of data){
+			dep += it[0] * it[1];
 			board.push({
-				price: data[i][0].toLocaleString(),
-				amount: data[i][1],
+				price: it[0].toLocaleString(),
+				amount: it[1],
 				depth: (dep | 0).toLocaleString()
 			});
 		}
@@ -871,17 +858,17 @@ class Client {
 			this.graph.setFocusXAxis(sec);
 		}
 	}
-	public createGraph(obj: Stream): void {
+	private createGraph(obj: Stream): void {
 		this.graph = new Graph(obj);
 	}
-	public addData(obj: Stream): void {
+	private addData(obj: Stream): void {
 		if(this.graph !== undefined){
 			this.graph.addContext(obj);
 			this.graph.addDepth(obj);
 			this.graph.draw();
 		}
 	}
-	public loadHistory(): void {
+	private loadHistory(): void {
 		const url = historyDataURL + this.currency_pair;
 		const xhr = new XMLHttpRequest();
 		xhr.ontimeout = () => {
@@ -904,7 +891,7 @@ class Client {
 		xhr.timeout = 5000;		// 5秒
 		xhr.send(null);
 	}
-	public addDataHistory(data: History[]): void {
+	private addDataHistory(data: History[]): void {
 		let ask: number[] | undefined = undefined;
 		let bid: number[] | undefined = undefined;
 		let trade: HistoryTrade | undefined = undefined;
@@ -953,7 +940,7 @@ class Client {
 	}
 }
 
-var dispdata: Display = {
+const dispdata: Display = {
 	last_trade: {
 		price: "0",
 		action: "▲",
@@ -987,7 +974,7 @@ var dispdata: Display = {
 		eth_jpy: {name: "eth/jpy", hash: "#eth_jpy", active: ""}
 	}
 };
-var vm = new Vue({
+const vm = new Vue({
 	el: "#container",
 	data: dispdata,
 	watch: {
@@ -996,7 +983,7 @@ var vm = new Vue({
 		}
 	}
 });
-var cli = new Client(location.hash);
+let cli = new Client(location.hash);
 window.addEventListener("hashchange", (ev) => {
 	if(cli != null){
 		cli.dispose();
