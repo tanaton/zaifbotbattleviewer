@@ -207,7 +207,6 @@ func streamReaderProc(ctx context.Context, wss, key string, wsch chan<- StreamPa
 					s:    s,
 				}
 			}
-			return nil
 		}()
 		if IsCancel(cctx) {
 			log.Infow("streamReaderProc終了")
@@ -231,7 +230,7 @@ func streamStoreProc(ctx context.Context, rsch <-chan StreamPacket, wsch chan<- 
 	slm := make(map[string][]StoreData, 8)
 	oldstream := make(map[string]Stream, 8)
 	now := time.Now()
-	for key, _ := range zaifStremUrlList {
+	for key := range zaifStremUrlList {
 		sl, err := storeReaderProc(now, key)
 		if err != nil {
 			log.Infow("ファイル読み込み失敗", "error", err)
