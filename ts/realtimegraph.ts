@@ -1,18 +1,18 @@
 import * as d3 from 'd3';
 import Vue from 'vue';
 
-const svgID: string = "svgarea";
-const streamBaseURL: string = "wss://ws.zaif.jp/stream?currency_pair=";
-const historyDataURL: string = "/api/zaif/1/oldstream/";
-const currency_pair_list: readonly string[] = ["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"];
+const svgID: Readonly<string> = "svgarea";
+const streamBaseURL: Readonly<string> = "wss://ws.zaif.jp/stream?currency_pair=";
+const historyDataURL: Readonly<string> = "/api/zaif/1/oldstream/";
+const currency_pair_list: ReadonlyArray<string> = ["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"];
 const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
 
 type Box = {
-	top: number;
-	right: number;
-	bottom: number;
-	left: number;
+	readonly top: number;
+	readonly right: number;
+	readonly bottom: number;
+	readonly left: number;
 }
 
 type Signal = "Asks" | "Bids" | "LastPrice";
@@ -22,61 +22,61 @@ function isSignal(a: any): a is Signal {
 type AskBid = "Asks" | "Bids";
 
 type TradeView = {
-	trade_type: string;
-	direction: string;
-	price_orig: number;
-	price: string;
-	amount: number;
-	date: string;
+	readonly trade_type: string;
+	readonly direction: string;
+	readonly price_orig: number;
+	readonly price: string;
+	readonly amount: number;
+	readonly date: string;
 }
 
 type Board = {
-	price: string;
-	amount: number;
-	depth: string;
+	readonly price: string;
+	readonly amount: number;
+	readonly depth: string;
 }
 
 type HistoryTrade = {
-	price: number;
-	amount: number;
-	trade_type: string;
+	readonly price: number;
+	readonly amount: number;
+	readonly trade_type: string;
 }
 
 type History = {
-	ts: number;
-	ask?: [number, number];
-	bid?: [number, number];
-	trade?: HistoryTrade;
+	readonly ts: number;
+	readonly ask?: [number, number];
+	readonly bid?: [number, number];
+	readonly trade?: HistoryTrade;
 }
 
 type ZaifStream = {
-	currency_pair: string;
-	timestamp: string;
-	asks: [number, number][];
-	bids: [number, number][];
-	trades: {
-		trade_type: string;
-		price: number;
-		amount: number;
-		date: number;
-	}[];
-	last_price: {
-		price: number;
-		action: string;
+	readonly currency_pair: string;
+	readonly timestamp: string;
+	asks: ReadonlyArray<[number, number]>;
+	bids: ReadonlyArray<[number, number]>;
+	trades: ReadonlyArray<{
+		readonly trade_type: string;
+		readonly price: number;
+		readonly amount: number;
+		readonly date: number;
+	}>;
+	readonly last_price: {
+		readonly price: number;
+		readonly action: string;
 	};
 }
 
 type Stream = {
-	Name: string;
-	Date: Date;
-	Signals?: {
+	readonly Name: string;
+	readonly Date: Date;
+	readonly Signals?: {
 		[key in Signal]?: {
-			Data: number;
+			readonly Data: number;
 		};
 	};
-	Depths?: {
-		Asks?: [number, number][],
-		Bids?: [number, number][]
+	readonly Depths?: {
+		Asks?: ReadonlyArray<[number, number]>,
+		Bids?: ReadonlyArray<[number, number]>
 	};
 }
 
@@ -803,7 +803,8 @@ class Client {
 			+ ` (${dispdata.currency_pair.first}/${dispdata.currency_pair.second}) 取引の様子`
 			+ ` - zaifの取引情報を表示するやつ`;
 		const tr: TradeView[] = [];
-		for(const it of obj.trades.reverse()){
+		for(let i = obj.trades.length - 1; i >= 0; i--){
+			const it = obj.trades[i];
 			let dir = "";
 			if(tr.length === 0){
 				dir = Client.getDirection(it.trade_type);
@@ -828,7 +829,7 @@ class Client {
 		dispdata.asks = this.analyzeBoard(obj.asks);
 		dispdata.date_diff = (Date.parse(obj.timestamp) - Date.now()) / 1000;
 	}
-	private analyzeBoard(data: number[][]): Board[] {
+	private analyzeBoard(data: ReadonlyArray<[number, number]>): Board[] {
 		let dep = 0;
 		const board: Board[] = [];
 		for(const it of data){
