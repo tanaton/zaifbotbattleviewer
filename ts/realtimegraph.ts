@@ -19,6 +19,7 @@ type Signal = "Asks" | "Bids" | "LastPrice";
 function isSignal(a: any): a is Signal {
 	return true;
 }
+type AskBid = "Asks" | "Bids";
 
 type TradeView = {
 	trade_type: string;
@@ -43,16 +44,16 @@ type HistoryTrade = {
 
 type History = {
 	ts: number;
-	ask: number[];
-	bid: number[];
-	trade: HistoryTrade;
+	ask?: [number, number];
+	bid?: [number, number];
+	trade?: HistoryTrade;
 }
 
 type ZaifStream = {
 	currency_pair: string;
 	timestamp: string;
-	asks: number[][];
-	bids: number[][];
+	asks: [number, number][];
+	bids: [number, number][];
 	trades: {
 		trade_type: string;
 		price: number;
@@ -69,19 +70,13 @@ type Stream = {
 	Name: string;
 	Date: Date;
 	Signals?: {
-		Asks?: {
-			Data: number;
-		};
-		Bids?: {
-			Data: number;
-		};
-		LastPrice?: {
+		[key in Signal]?: {
 			Data: number;
 		};
 	};
 	Depths?: {
-		Asks?: number[][],
-		Bids?: number[][]
+		Asks?: [number, number][],
+		Bids?: [number, number][]
 	};
 }
 
@@ -101,12 +96,12 @@ type Context = {
 }
 
 type Depth = {
-	name: string;
+	name: AskBid;
 	values: ChartDepthData[];
 }
 
 type Legend = {
-	name: string;
+	name: Signal;
 	last_price: number;
 }
 
@@ -134,7 +129,7 @@ type Display = {
 	};
 	date_diff: number;
 	currencys: {
-		[s: string]: {
+		[key: string]: {
 			name: string;
 			hash: string;
 			active: string;
@@ -143,13 +138,13 @@ type Display = {
 }
 
 class Graph {
-	private readonly focus_margin: Box = {top: 30, right: 10, bottom: 20, left: 60};
+	private readonly focus_margin: Box = Object.freeze({top: 30, right: 10, bottom: 20, left: 60});
 	private focus_width: number;
 	private focus_height: number;
-	private readonly context_margin: Box = {top: 510, right: 10, bottom: 20, left: 60};
+	private readonly context_margin: Box = Object.freeze({top: 510, right: 10, bottom: 20, left: 60});
 	private context_width: number;
 	private context_height: number;
-	private readonly depth_margin: Box = {top: 630, right: 10, bottom: 20, left: 60};
+	private readonly depth_margin: Box = Object.freeze({top: 630, right: 10, bottom: 20, left: 60});
 	private depth_width: number;
 	private depth_height: number;
 	private drawing: boolean = true;
@@ -202,7 +197,7 @@ class Graph {
 		values: []
 	}];
 	private ydtmp: [ChartContextData, ChartContextData];
-	private datamap: {[s: string]: boolean} = {};
+	private datamap: {[key in Signal]?: boolean} = {};
 
 	private draw_focus: boolean = false;
 	private draw_context: boolean = false;
@@ -436,9 +431,7 @@ class Graph {
 				Signals: {}
 			};
 			let flag = false;
-			const l = this.focus_data.length;
-			for(let i = 0; i < l; i++){
-				let it = this.focus_data[i];
+			for(const it of this.focus_data){
 				if(it.values.length > 0 && data.Signals !== undefined){
 					data.Signals[it.name] = {
 						Data: it.values[it.values.length - 1].data
@@ -469,9 +462,9 @@ class Graph {
 		const sigs = data.Signals;
 		let ret = false;
 		for(const key in sigs){
-			if(isSignal(key) && sigs.hasOwnProperty(key) && (this.datamap[key] == null)){
+			if(isSignal(key) && sigs.hasOwnProperty(key) && this.datamap[key]){
 				const data = (sigs[key] || {Data: 0}).Data;
-				let context_color = this.context_color.domain();
+				const context_color = this.context_color.domain();
 				context_color.push(key);
 				this.context_color.domain(context_color);
 				this.focus_data.push({
@@ -679,14 +672,10 @@ class Graph {
 		for(let i = 0; i < l; i++){
 			const f = this.focus_data[i];
 			const c = this.context_data[i];
-			const clen = c.values.length;
-			let j = 0;
-			for(j = 0; j < clen; j++){
-				if(c.values[j].date >= datestart){
-					break;
-				}
+			const j = c.values.findIndex(it => it.date >= datestart);
+			if(j >= 0){
+				f.values = c.values.slice(j);
 			}
-			f.values = c.values.slice(j);
 		}
 		this.focus_domain_yaxis_update = true;
 		this.focus_xaxis_sec = sec;
@@ -727,12 +716,11 @@ class Graph {
 }
 
 class Client {
-	private graph: Graph | undefined;
+	private graph?: Graph = undefined;
 	private ws: WebSocket;
-	public currency_pair: string;
+	private currency_pair: string;
 
 	constructor(hash: string = "#btc_jpy"){
-		this.graph = undefined;
 		this.currency_pair = Client.getCurrencyPair(hash);
 		this.loadHistory();
 		this.ws = new WebSocket(this.getWebsocketURL());
@@ -892,24 +880,23 @@ class Client {
 		xhr.send(null);
 	}
 	private addDataHistory(data: History[]): void {
-		let ask: number[] | undefined = undefined;
-		let bid: number[] | undefined = undefined;
+		let ask: [number, number] | undefined = undefined;
+		let bid: [number, number] | undefined = undefined;
 		let trade: HistoryTrade | undefined = undefined;
-		const l = data.length;
-		for(let i = 0; i < l; i++){
-			if(data[i].ask !== undefined){
-				ask = data[i].ask;
+		for(const it of data){
+			if(it.ask !== undefined){
+				ask = it.ask;
 			}
-			if(data[i].bid !== undefined){
-				bid = data[i].bid;
+			if(it.bid !== undefined){
+				bid = it.bid;
 			}
-			if(data[i].trade !== undefined){
-				trade = data[i].trade;
+			if(it.trade !== undefined){
+				trade = it.trade;
 			}
 			if(ask !== undefined && bid !== undefined && trade !== undefined){
 				const obj: Stream = {
 					Name: this.currency_pair,
-					Date: new Date(data[i].ts * 1000),
+					Date: new Date(it.ts * 1000),
 					Signals: {
 						Asks: {
 							Data: ask[0]
@@ -920,10 +907,6 @@ class Client {
 						LastPrice: {
 							Data: trade.price
 						}
-					},
-					Depths: {
-						Asks: [],
-						Bids: []	
 					}
 				};
 				if(this.graph === undefined){
