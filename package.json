@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
+    "debug-build": "webpack -d --devtool source-map",
     "build": "webpack --optimize-minimize --devtool source-map",
     "watch": "webpack --optimize-minimize --devtool source-map -w"
   },

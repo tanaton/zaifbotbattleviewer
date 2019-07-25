@@ -1,10 +1,56 @@
 import * as d3 from 'd3';
 import Vue from 'vue';
 
+type CurrencyPair = "btc_jpy" | "xem_jpy" | "mona_jpy" | "bch_jpy" | "eth_jpy";
+function isCurrencyPair(a: string): a is CurrencyPair {
+	switch(a){
+		case "btc_jpy":		// fallthrough
+		case "xem_jpy":		// fallthrough
+		case "mona_jpy":	// fallthrough
+		case "bch_jpy":		// fallthrough
+		case "eth_jpy":		// fallthrough
+			return true;
+		default:
+	}
+	return false;
+}
+type Direction = "▼" | "▲";
+function isDirection(a: string): a is Direction {
+	switch(a){
+		case "▼":		// fallthrough
+		case "▲":		// fallthrough
+			return true;
+		default:
+	}
+	return false;
+}
+type DirectionEng = "ask" | "bid";
+function isDirectionEng(a: string): a is DirectionEng {
+	switch(a){
+		case "ask":		// fallthrough
+		case "bid":		// fallthrough
+			return true;
+		default:
+	}
+	return false;
+}
+type Signal = "Asks" | "Bids" | "LastPrice";
+function isSignal(a: string): a is Signal {
+	switch(a){
+		case "Asks":			// fallthrough
+		case "Bids":			// fallthrough
+		case "LastPrice":		// fallthrough
+			return true;
+		default:
+	}
+	return false;
+}
+type AskBid = "Asks" | "Bids";
+
 const svgID: string = "svgarea";
 const streamBaseURL: string = "wss://ws.zaif.jp/stream?currency_pair=";
 const historyDataURL: string = "/api/zaif/1/oldstream/";
-const currency_pair_list: readonly string[] = ["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"];
+const currency_pair_list: readonly CurrencyPair[] = ["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"];
 const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
 
@@ -15,15 +61,9 @@ type Box = {
 	readonly left: number;
 }
 
-type Signal = "Asks" | "Bids" | "LastPrice";
-function isSignal(a: any): a is Signal {
-	return true;
-}
-type AskBid = "Asks" | "Bids";
-
 type TradeView = {
-	readonly trade_type: string;
-	readonly direction: string;
+	readonly trade_type: DirectionEng;
+	readonly direction: Direction | "";
 	readonly price_orig: number;
 	readonly price: string;
 	readonly amount: number;
@@ -50,24 +90,24 @@ type History = {
 }
 
 type ZaifStream = {
-	readonly currency_pair: string;
+	readonly currency_pair: CurrencyPair;
 	readonly timestamp: string;
 	asks: readonly [number, number][];
 	bids: readonly [number, number][];
 	trades: readonly {
-		readonly trade_type: string;
+		readonly trade_type: DirectionEng;
 		readonly price: number;
 		readonly amount: number;
 		readonly date: number;
 	}[];
 	readonly last_price: {
 		readonly price: number;
-		readonly action: string;
+		readonly action: DirectionEng;
 	};
 }
 
 type Stream = {
-	readonly Name: string;
+	readonly Name: CurrencyPair | "";
 	readonly Date: Date;
 	readonly Signals?: {
 		[key in Signal]?: {
@@ -86,8 +126,8 @@ type ChartContextData = {
 }
 
 type ChartDepthData = {
-	price: number;
-	depth: number;
+	readonly price: number;
+	readonly depth: number;
 }
 
 type Context = {
@@ -108,8 +148,8 @@ type Legend = {
 type Display = {
 	readonly last_trade: {
 		price: string;
-		action: string;
-		type: string;
+		action: Direction;
+		type: DirectionEng;
 	};
 	bids: readonly Board[];
 	asks: readonly Board[];
@@ -129,10 +169,10 @@ type Display = {
 	};
 	date_diff: number;
 	readonly currencys: {
-		readonly [key: string]: {
+		readonly [key in CurrencyPair]: {
 			readonly name: string;
 			readonly hash: string;
-			active: string;
+			active: "active" | "";
 		};
 	};
 }
@@ -462,7 +502,7 @@ class Graph {
 		const sigs = data.Signals;
 		let ret = false;
 		for(const key in sigs){
-			if(isSignal(key) && sigs.hasOwnProperty(key) && this.datamap[key]){
+			if(isSignal(key) && sigs.hasOwnProperty(key) && this.datamap[key] === undefined){
 				const data = (sigs[key] || {Data: 0}).Data;
 				const context_color = this.context_color.domain();
 				context_color.push(key);
@@ -718,7 +758,7 @@ class Graph {
 class Client {
 	private graph?: Graph = undefined;
 	private readonly ws: WebSocket;
-	private readonly currency_pair: string;
+	private readonly currency_pair: CurrencyPair;
 
 	constructor(hash: string = "#btc_jpy"){
 		this.currency_pair = Client.getCurrencyPair(hash);
@@ -734,7 +774,7 @@ class Client {
 			console.log('切断しました。');
 		};
 		this.ws.onmessage = (msg) => {
-			const obj = JSON.parse(msg.data);
+			const obj: ZaifStream = JSON.parse(msg.data);
 			this.update(obj);
 		};
 	}
@@ -745,17 +785,18 @@ class Client {
 			this.graph = undefined;
 		}
 	}
-	private static getCurrencyPair(hash: string = "#btc_jpy"): string {
+	private static getCurrencyPair(hash: string = "#btc_jpy"): CurrencyPair {
 		const cp = hash.slice(1);
-		if(currency_pair_list.find(data => data === cp) == undefined){
+		const i = currency_pair_list.findIndex(data => data === cp);
+		if(i < 0){
 			return currency_pair_list[0];
 		}
-		return cp;
+		return currency_pair_list[i];
 	}
 	private getWebsocketURL(): string {
 		return streamBaseURL + this.currency_pair;
 	}
-	private static getDirection(action: string): string {
+	private static getDirection(action: DirectionEng): Direction {
 		return action === "ask" ? "▼" : "▲";
 	}
 	private update(obj: Readonly<ZaifStream>){
@@ -788,7 +829,7 @@ class Client {
 	private updateView(obj: Readonly<ZaifStream>): void {
 		const cp: readonly string[] = this.currency_pair.split("_");
 		for(const key in dispdata.currencys){
-			if(dispdata.currencys.hasOwnProperty(key)){
+			if(isCurrencyPair(key) && dispdata.currencys.hasOwnProperty(key)){
 				dispdata.currencys[key].active = "";
 			}
 		}
@@ -805,7 +846,7 @@ class Client {
 		const tr: TradeView[] = [];
 		for(let i = obj.trades.length - 1; i >= 0; i--){
 			const it = obj.trades[i];
-			let dir = "";
+			let dir: Direction | "" = "";
 			if(tr.length === 0){
 				dir = Client.getDirection(it.trade_type);
 			} else {
@@ -962,13 +1003,13 @@ const vm = new Vue({
 	el: "#container",
 	data: dispdata,
 	watch: {
-		"focus.xaxis.selected": (n, o) => {
+		"focus.xaxis.selected": (n) => {
 			cli.setGraphFocusXAxis(n);
 		}
 	}
 });
 let cli = new Client(location.hash);
-window.addEventListener("hashchange", (ev) => {
+window.addEventListener("hashchange", () => {
 	if(cli != null){
 		cli.dispose();
 	}
