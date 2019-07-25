@@ -349,6 +349,9 @@ func NewStoreItem(date time.Time, name string) (*StoreItem, error) {
 	si.date = date
 	si.name = name
 	p := si.createPathTmp()
+	if err := createDir(p); err != nil {
+		return nil, err
+	}
 	fp, err := os.Create(p)
 	if err != nil {
 		return nil, err
@@ -357,6 +360,22 @@ func NewStoreItem(date time.Time, name string) (*StoreItem, error) {
 	si.w = bufio.NewWriterSize(si.gw, 16*1024)
 	si.fp = fp
 	return si, nil
+}
+
+func createDir(p string) error {
+	dir := filepath.Dir(p)
+	if dir == "." {
+		return nil
+	}
+	st, err := os.Stat(dir)
+	if err != nil {
+		err = os.MkdirAll(dir, 0666)
+	} else {
+		if st.IsDir() == false {
+			err = errors.New("フォルダ以外の何かがあるよ")
+		}
+	}
+	return err
 }
 
 func (si *StoreItem) reset(date time.Time, name string) error {
