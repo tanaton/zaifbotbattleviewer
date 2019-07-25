@@ -1,10 +1,10 @@
 import * as d3 from 'd3';
 import Vue from 'vue';
 
-const svgID: Readonly<string> = "svgarea";
-const streamBaseURL: Readonly<string> = "wss://ws.zaif.jp/stream?currency_pair=";
-const historyDataURL: Readonly<string> = "/api/zaif/1/oldstream/";
-const currency_pair_list: ReadonlyArray<string> = ["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"];
+const svgID: string = "svgarea";
+const streamBaseURL: string = "wss://ws.zaif.jp/stream?currency_pair=";
+const historyDataURL: string = "/api/zaif/1/oldstream/";
+const currency_pair_list: readonly string[] = ["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"];
 const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
 
@@ -52,14 +52,14 @@ type History = {
 type ZaifStream = {
 	readonly currency_pair: string;
 	readonly timestamp: string;
-	asks: ReadonlyArray<[number, number]>;
-	bids: ReadonlyArray<[number, number]>;
-	trades: ReadonlyArray<{
+	asks: readonly [number, number][];
+	bids: readonly [number, number][];
+	trades: readonly {
 		readonly trade_type: string;
 		readonly price: number;
 		readonly amount: number;
 		readonly date: number;
-	}>;
+	}[];
 	readonly last_price: {
 		readonly price: number;
 		readonly action: string;
@@ -75,8 +75,8 @@ type Stream = {
 		};
 	};
 	readonly Depths?: {
-		Asks?: ReadonlyArray<[number, number]>,
-		Bids?: ReadonlyArray<[number, number]>
+		Asks?: readonly [number, number][],
+		Bids?: readonly [number, number][]
 	};
 }
 
@@ -91,67 +91,67 @@ type ChartDepthData = {
 }
 
 type Context = {
-	name: Signal;
+	readonly name: Signal;
 	values: ChartContextData[];
 }
 
 type Depth = {
-	name: AskBid;
+	readonly name: AskBid;
 	values: ChartDepthData[];
 }
 
 type Legend = {
-	name: Signal;
+	readonly name: Signal;
 	last_price: number;
 }
 
 type Display = {
-	last_trade: {
+	readonly last_trade: {
 		price: string;
 		action: string;
 		type: string;
 	};
-	bids: Board[];
-	asks: Board[];
-	trades: TradeView[];
-	focus: {
-		xaxis: {
+	bids: readonly Board[];
+	asks: readonly Board[];
+	trades: readonly TradeView[];
+	readonly focus: {
+		readonly xaxis: {
 			selected: number;
-			options: {
-				text: string;
-				value: number;
+			options: readonly {
+				readonly text: string;
+				readonly value: number;
 			}[];
 		};
 	};
-	currency_pair: {
+	readonly currency_pair: {
 		first: string;
 		second: string;
 	};
 	date_diff: number;
-	currencys: {
-		[key: string]: {
-			name: string;
-			hash: string;
+	readonly currencys: {
+		readonly [key: string]: {
+			readonly name: string;
+			readonly hash: string;
 			active: string;
 		};
 	};
 }
 
 class Graph {
-	private readonly focus_margin: Box = Object.freeze({top: 30, right: 10, bottom: 20, left: 60});
+	private readonly focus_margin: Box = {top: 30, right: 10, bottom: 20, left: 60};
 	private focus_width: number;
 	private focus_height: number;
-	private readonly context_margin: Box = Object.freeze({top: 510, right: 10, bottom: 20, left: 60});
+	private readonly context_margin: Box = {top: 510, right: 10, bottom: 20, left: 60};
 	private context_width: number;
 	private context_height: number;
-	private readonly depth_margin: Box = Object.freeze({top: 630, right: 10, bottom: 20, left: 60});
+	private readonly depth_margin: Box = {top: 630, right: 10, bottom: 20, left: 60};
 	private depth_width: number;
 	private depth_height: number;
 	private drawing: boolean = true;
 	private tid: number = 0;
 	private rid: number = 0;
 
-	private svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any>;
+	private svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, unknown>;
 	private focus: d3.Selection<SVGGElement, Context, SVGSVGElement, unknown>;
 	private focus_legend: d3.Selection<SVGGElement, Legend, SVGSVGElement, unknown>;
 	private context: d3.Selection<SVGGElement, Context, SVGSVGElement, unknown>;
@@ -189,14 +189,14 @@ class Graph {
 	private focus_data: Context[] = [];
 	private focus_data_legend: Legend[] = [];
 	private context_data: Context[] = [];
-	private depth_data: Depth[] = [{
+	private depth_data: [Depth, Depth] = [{
 		name: "Asks",
 		values: []
 	}, {
 		name: "Bids",
 		values: []
 	}];
-	private ydtmp: [ChartContextData, ChartContextData];
+	private ydtmp: readonly [ChartContextData, ChartContextData];
 	private datamap: {[key in Signal]?: boolean} = {};
 
 	private draw_focus: boolean = false;
@@ -205,7 +205,7 @@ class Graph {
 	private focus_domain_yaxis_update: boolean = false;
 	private focus_xaxis_sec: number = 120;
 
-	constructor(obj: Stream) {
+	constructor(obj: Readonly<Stream>) {
 		this.focus_width = 850 - this.focus_margin.left - this.focus_margin.right;
 		this.focus_height = 500 - this.focus_margin.top - this.focus_margin.bottom;
 		this.context_width = 850 - this.context_margin.left - this.context_margin.right;
@@ -322,31 +322,31 @@ class Graph {
 			.attr("width", this.focus_width + this.focus_margin.left + this.focus_margin.right + 10)
 			.attr("height", this.depth_height + this.depth_margin.top + this.depth_margin.bottom + 10);
 
-		this.focus = this.svg.selectAll(".focus")
+		this.focus = this.svg.selectAll<SVGGElement, Context>(".focus")
 			.data(this.focus_data)
 			.enter().append("g")
 			.attr("transform", `translate(${this.focus_margin.left},${this.focus_margin.top})`)
 			.attr("class", "focus");
 
-		this.focus_legend = this.svg.selectAll(".focus-legend")
+		this.focus_legend = this.svg.selectAll<SVGGElement, Legend>(".focus-legend")
 			.data(this.focus_data_legend)
 			.enter().append("g")
 			.attr("transform", "translate(0,0)")
 			.attr("class", "focus-legend");
 
-		this.context = this.svg.selectAll(".context")
+		this.context = this.svg.selectAll<SVGGElement, Context>(".context")
 			.data(this.context_data)
 			.enter().append("g")
 			.attr("transform", `translate(${this.context_margin.left},${this.context_margin.top})`)
 			.attr("class", "context");
 
-		this.depth = this.svg.selectAll(".depth")
+		this.depth = this.svg.selectAll<SVGGElement, Depth>(".depth")
 			.data(this.depth_data)
 			.enter().append("g")
 			.attr("transform", `translate(${this.depth_margin.left},${this.depth_margin.top})`)
 			.attr("class", "depth");
 
-		this.depth_area = this.svg.selectAll(".depth_area")
+		this.depth_area = this.svg.selectAll<SVGGElement, Depth>(".depth_area")
 			.data(this.depth_data)
 			.enter().append("g")
 			.attr("transform", `translate(${this.depth_margin.left},${this.depth_margin.top})`)
@@ -418,7 +418,7 @@ class Graph {
 			.attr("class", "y axis")
 			.call(this.depth_yAxis);
 	}
-	private init(data: Stream): void {
+	private init(data: Readonly<Stream>): void {
 		this.context_color.domain([]);
 		this.addsig(data);
 		//this.addContext(data);
@@ -457,7 +457,7 @@ class Graph {
 			doc.innerHTML = "";
 		}
 	}
-	private addsig(data: Stream): boolean {
+	private addsig(data: Readonly<Stream>): boolean {
 		const date = data.Date;
 		const sigs = data.Signals;
 		let ret = false;
@@ -491,7 +491,7 @@ class Graph {
 		}
 		return ret;
 	}
-	private static appendData(data: Context, val: ChartContextData): boolean {
+	private static appendData(data: Context, val: Readonly<ChartContextData>): boolean {
 		let ret = false;
 		const old = data.values.length > 0 ? data.values[data.values.length - 1] : undefined;
 		// 点の数を減らす処理
@@ -511,7 +511,7 @@ class Graph {
 		}
 		return ret;
 	}
-	public addContext(data: Stream): void {
+	public addContext(data: Readonly<Stream>): void {
 		const date = data.Date;
 		const datestart = new Date(Date.now() - (this.focus_xaxis_sec * 1000));
 		const l = this.focus_data.length;
@@ -549,7 +549,7 @@ class Graph {
 		}
 		this.updateContextDomain(data);
 	}
-	public addDepth(data: Stream): void {
+	public addDepth(data: Readonly<Stream>): void {
 		const deps = data.Depths || {};
 		const asks: ChartDepthData[] = [];
 		const bids: ChartDepthData[] = [];
@@ -586,7 +586,7 @@ class Graph {
 		this.draw_depth = true;
 		this.updateDepthDomain();
 	}
-	private updateContextDomain(data: Stream): void {
+	private updateContextDomain(data: Readonly<Stream>): void {
 		const date = data.Date;
 		const datestart = new Date(+date - (this.focus_xaxis_sec * 1000));
 		const focus_xd = [datestart, date];
@@ -692,33 +692,33 @@ class Graph {
 		this.drawing = true;
 		if(this.draw_focus){
 			this.draw_focus = false;
-			this.focus.select("path").attr("d", this.focus_path_d);					// 拡大グラフアップデート
+			this.focus.select<SVGPathElement>("path").attr("d", this.focus_path_d);		// 拡大グラフアップデート
 //			this.focus.select(".legend.user").attr("transform", this.text_transform).text(this.text_update);
-			this.focus_legend.select(".focus-legend-text").text(this.focus_legend_update);
-			this.focus.select<SVGGElement>(".x.axis").call(this.focus_xAxis);		// 拡大x軸アップデート
-			this.focus.select<SVGGElement>(".y.axis").call(this.focus_yAxis); 		// 拡大y軸アップデート
+			this.focus_legend.select<SVGTextElement>(".focus-legend-text").text(this.focus_legend_update);
+			this.focus.select<SVGGElement>(".x.axis").call(this.focus_xAxis);			// 拡大x軸アップデート
+			this.focus.select<SVGGElement>(".y.axis").call(this.focus_yAxis); 			// 拡大y軸アップデート
 		}
 		if(this.draw_context){
 			this.draw_context = false;
-			this.context.select("path").attr("d", this.context_path_d);				// 全体グラフアップデート
-			this.context.select<SVGGElement>(".x.axis").call(this.context_xAxis);	// 全体x軸アップデート
+			this.context.select<SVGPathElement>("path").attr("d", this.context_path_d);	// 全体グラフアップデート
+			this.context.select<SVGGElement>(".x.axis").call(this.context_xAxis);		// 全体x軸アップデート
 			this.context_yAxis.tickValues(this.context_y.domain());
-			this.context.select<SVGGElement>(".y.axis").call(this.context_yAxis);	// 全体x軸アップデート
+			this.context.select<SVGGElement>(".y.axis").call(this.context_yAxis);		// 全体x軸アップデート
 		}
 		if(this.draw_depth){
 			this.draw_depth = false;
-			this.depth.select("path").attr("d", this.depth_path_d);					// 深さグラフアップデート
-			this.depth.select<SVGGElement>(".x.axis").call(this.depth_xAxis);		// 深さx軸アップデート
-			this.depth.select<SVGGElement>(".y.axis").call(this.depth_yAxis); 		// 深さy軸アップデート
-			this.depth_area.select("path").attr("d", this.depth_area_d);			// 深さグラフ領域アップデート
+			this.depth.select<SVGPathElement>("path").attr("d", this.depth_path_d);		// 深さグラフアップデート
+			this.depth.select<SVGGElement>(".x.axis").call(this.depth_xAxis);			// 深さx軸アップデート
+			this.depth.select<SVGGElement>(".y.axis").call(this.depth_yAxis); 			// 深さy軸アップデート
+			this.depth_area.select<SVGPathElement>("path").attr("d", this.depth_area_d);// 深さグラフ領域アップデート
 		}
 	}
 }
 
 class Client {
 	private graph?: Graph = undefined;
-	private ws: WebSocket;
-	private currency_pair: string;
+	private readonly ws: WebSocket;
+	private readonly currency_pair: string;
 
 	constructor(hash: string = "#btc_jpy"){
 		this.currency_pair = Client.getCurrencyPair(hash);
@@ -746,11 +746,11 @@ class Client {
 		}
 	}
 	private static getCurrencyPair(hash: string = "#btc_jpy"): string {
-		let cp = hash.slice(1);
+		const cp = hash.slice(1);
 		if(currency_pair_list.find(data => data === cp) == undefined){
-			cp = currency_pair_list[0];
+			return currency_pair_list[0];
 		}
-		return cp
+		return cp;
 	}
 	private getWebsocketURL(): string {
 		return streamBaseURL + this.currency_pair;
@@ -758,7 +758,7 @@ class Client {
 	private static getDirection(action: string): string {
 		return action === "ask" ? "▼" : "▲";
 	}
-	private update(obj: ZaifStream){
+	private update(obj: Readonly<ZaifStream>){
 		const data: Stream = {
 			Name: obj.currency_pair,
 			Date: new Date(),
@@ -785,8 +785,8 @@ class Client {
 		// vue用
 		this.updateView(obj);
 	}
-	private updateView(obj: ZaifStream): void {
-		const cp = this.currency_pair.split("_");
+	private updateView(obj: Readonly<ZaifStream>): void {
+		const cp: readonly string[] = this.currency_pair.split("_");
 		for(const key in dispdata.currencys){
 			if(dispdata.currencys.hasOwnProperty(key)){
 				dispdata.currencys[key].active = "";
@@ -829,7 +829,7 @@ class Client {
 		dispdata.asks = this.analyzeBoard(obj.asks);
 		dispdata.date_diff = (Date.parse(obj.timestamp) - Date.now()) / 1000;
 	}
-	private analyzeBoard(data: ReadonlyArray<[number, number]>): Board[] {
+	private analyzeBoard(data: readonly [number, number][]): readonly Board[] {
 		let dep = 0;
 		const board: Board[] = [];
 		for(const it of data){
@@ -847,10 +847,10 @@ class Client {
 			this.graph.setFocusXAxis(sec);
 		}
 	}
-	private createGraph(obj: Stream): void {
+	private createGraph(obj: Readonly<Stream>): void {
 		this.graph = new Graph(obj);
 	}
-	private addData(obj: Stream): void {
+	private addData(obj: Readonly<Stream>): void {
 		if(this.graph !== undefined){
 			this.graph.addContext(obj);
 			this.graph.addDepth(obj);
@@ -880,9 +880,9 @@ class Client {
 		xhr.timeout = 5000;		// 5秒
 		xhr.send(null);
 	}
-	private addDataHistory(data: History[]): void {
-		let ask: [number, number] | undefined = undefined;
-		let bid: [number, number] | undefined = undefined;
+	private addDataHistory(data: readonly History[]): void {
+		let ask: readonly [number, number] | undefined = undefined;
+		let bid: readonly [number, number] | undefined = undefined;
 		let trade: HistoryTrade | undefined = undefined;
 		for(const it of data){
 			if(it.ask !== undefined){
