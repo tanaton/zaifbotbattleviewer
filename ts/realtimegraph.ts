@@ -47,12 +47,14 @@ function isSignal(a: string): a is Signal {
 }
 type AskBid = "Asks" | "Bids";
 
-const svgID: string = "svgarea";
-const streamBaseURL: string = "wss://ws.zaif.jp/stream?currency_pair=";
-const historyDataURL: string = "/api/zaif/1/oldstream/";
+const svgID = "svgarea";
+const streamBaseURL = "wss://ws.zaif.jp/stream?currency_pair=";
+const historyDataURL = "/api/zaif/1/oldstream/";
 const currency_pair_list: readonly CurrencyPair[] = ["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"];
 const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
+const PriceMax = 10000000;
+const PriceMin = -10000000;
 
 type Box = {
 	readonly top: number;
@@ -104,6 +106,47 @@ type ZaifStream = {
 		readonly price: number;
 		readonly action: DirectionEng;
 	};
+}
+function isZaifStream(a: any): a is ZaifStream {
+	if((a instanceof Object) === false){
+		return false;
+	}
+	if(isCurrencyPair(a.currency_pair) === false){
+		return false;
+	}
+	if(!a.timestamp){
+		return false;
+	}
+	if((a.asks instanceof Array) === false){
+		return false;
+	}
+	if((a.asks as [number, number][]).every(it => it.length === 2) === false){
+		return false;
+	}
+	if((a.bids instanceof Array) === false){
+		return false;
+	}
+	if((a.bids as [number, number][]).every(it => it.length === 2) === false){
+		return false;
+	}
+	if((a.trades instanceof Array) === false){
+		return false;
+	}
+	if((a.trades as readonly {
+		readonly trade_type: DirectionEng;
+		readonly price: number;
+		readonly amount: number;
+		readonly date: number;
+	}[]).every(it => isDirectionEng(it.trade_type)) === false){
+		return false;
+	}
+	if((a.last_price instanceof Object) === false){
+		return false;
+	}
+	if(isDirectionEng(a.last_price.action) === false){
+		return false;
+	}
+	return true;
 }
 
 type StreamSignals = {
@@ -255,17 +298,17 @@ class Graph {
 		this.depth_height = 760 - this.depth_margin.top - this.depth_margin.bottom;
 		this.ydtmp = [{
 			date: obj.Date,
-			data: 10000000
+			data: PriceMax
 		}, {
 			date: obj.Date,
-			data: -10000000
+			data: PriceMin
 		}];
 
 		this.focus_x = d3.scaleTime()
 			.domain([0, 0])
 			.range([0, this.focus_width]);
 		this.focus_y = d3.scaleLinear()
-			.domain([10000000, -10000000])
+			.domain([PriceMax, PriceMin])
 			.range([this.focus_height, 0]);
 		this.focus_xAxis = d3.axisBottom<Date>(this.focus_x)
 			.tickSizeInner(-this.focus_height)
@@ -308,7 +351,7 @@ class Graph {
 			.domain([0, 0])
 			.range([0, this.depth_width]);
 		this.depth_y = d3.scaleLinear()
-			.domain([10000000, -10000000])
+			.domain([PriceMax, PriceMin])
 			.range([this.depth_height, 0]);
 		this.depth_xAxis = d3.axisBottom(this.depth_x)
 			.tickSizeOuter(-this.depth_height)
@@ -350,9 +393,7 @@ class Graph {
 		};
 		this.text_update = d => d.name + " " + d.values[d.values.length - 1].data;
 */
-		this.focus_legend_transform = (d: Legend, i: number): string => {
-			return `translate(${(i * 150) + 66},0)`;
-		}
+		this.focus_legend_transform = (d: Legend, i: number): string => `translate(${(i * 150) + 66},0)`;
 		this.focus_legend_update = (d: Legend): string => `${d.name} ${d.last_price.toLocaleString()}`;
 
 		// オブジェクト構築
@@ -592,41 +633,28 @@ class Graph {
 	}
 	public addDepth(data: Readonly<Stream>): void {
 		const deps = data.Depths || {};
-		const asks: ChartDepthData[] = [];
-		const bids: ChartDepthData[] = [];
-		let dep = 0;
-		if(deps.Asks){
-			asks.push({
-				price: deps.Asks[0][0],
-				depth: 0
-			});
-			for(const ask of deps.Asks){
-				dep += ask[0] * ask[1];
-				asks.push({
-					price: ask[0],
-					depth: dep
+		[deps.Asks, deps.Bids].forEach((it, i) => {
+			if(it){
+				let dep = 0;
+				this.depth_data[i].values = it.map((price: readonly [number, number]): ChartDepthData => {
+					dep += price[0] * price[1];
+					return {price: price[0], depth: dep};
 				});
-			}
-		}
-		dep = 0;
-		if(deps.Bids){
-			bids.push({
-				price: deps.Bids[0][0],
-				depth: 0
-			});
-			for(const bid of deps.Bids){
-				dep += bid[0] * bid[1];
-				bids.push({
-					price: bid[0],
-					depth: dep
+				this.depth_data[i].values.unshift({
+					price: it[0][0],
+					depth: 0
 				});
+				this.draw_depth = true;
 			}
-		}
-		this.depth_data[0].values = asks;
-		this.depth_data[1].values = bids;
-		this.draw_depth = true;
+		});
 	}
-	public updateContextDomain(): void {
+	public static contextMinFunc(num: number, it: ChartContextData): number {
+		return (num < it.data) ? num : it.data;
+	}
+	public static contextMaxFunc(num: number, it: ChartContextData): number {
+		return (num > it.data) ? num : it.data;
+	}
+	public updateContextDomain(all = false): void {
 		const date = new Date();
 		const datestart = new Date(+date - (this.focus_xaxis_sec * 1000));
 		const focus_xd = [datestart, date];
@@ -637,7 +665,7 @@ class Graph {
 		context_xd[1] = date;
 
 		// 縦軸の値の幅を設定
-		if(this.focus_domain_yaxis_update === false){
+		if(this.focus_domain_yaxis_update === false && all === false){
 			for(const fd of this.focus_data){
 				const l = fd.values.length - 1;
 				if(l >= 0){
@@ -653,37 +681,41 @@ class Graph {
 			}
 		}
 		// 現在の最大最小が表示外になった場合
-		if(ydtmp[0].date < datestart || this.focus_domain_yaxis_update){
-			ydtmp[0].data = 10000000;
-			for(const fd of this.focus_data){
-				const it = d3.min(fd.values, it => it.data) || 0;
-				if(ydtmp[0].data > it){
-					ydtmp[0].data = it;
-				}
-			}
+		if(ydtmp[0].date < datestart || this.focus_domain_yaxis_update || all){
+			ydtmp[0].data = this.focus_data.reduce((num, it) => {
+				const data = it.values.reduce(Graph.contextMinFunc, PriceMax);
+				return (num < data) ? num : data;
+			}, PriceMax);
 		}
-		if(ydtmp[1].date < datestart || this.focus_domain_yaxis_update){
-			ydtmp[1].data = -10000000;
-			for(const fd of this.focus_data){
-				const it = d3.max(fd.values, it => it.data) || 0;
-				if(ydtmp[1].data < it){
-					ydtmp[1].data = it;
-				}
-			}
+		if(ydtmp[1].date < datestart || this.focus_domain_yaxis_update || all){
+			ydtmp[1].data = this.focus_data.reduce((num, it) => {
+				const data = it.values.reduce(Graph.contextMaxFunc, PriceMin);
+				return (num > data) ? num : data;
+			}, PriceMin);
 		}
-		for(const cd of this.context_data){
-			const l = cd.values.length - 1;
-			if(l >= 0){
-				const data = cd.values[l].data;
-				// 最大値の更新
-				if(context_yd[0] > data){
-					context_yd[0] = data;
-				}
-				if(context_yd[1] < data){
-					context_yd[1] = data;
-				}
+		if(all){
+			for(const cd of this.context_data){
+				context_yd[0] = cd.values.reduce(Graph.contextMinFunc, context_yd[0]);
+				context_yd[1] = cd.values.reduce(Graph.contextMaxFunc, context_yd[1]);
 				if(context_xd[0] > cd.values[0].date){
 					context_xd[0] = cd.values[0].date;
+				}
+			}
+		} else {
+			for(const cd of this.context_data){
+				const l = cd.values.length - 1;
+				if(l >= 0){
+					const data = cd.values[l].data;
+					// 最大値の更新
+					if(context_yd[0] > data){
+						context_yd[0] = data;
+					}
+					if(context_yd[1] < data){
+						context_yd[1] = data;
+					}
+					if(context_xd[0] > cd.values[0].date){
+						context_xd[0] = cd.values[0].date;
+					}
 				}
 			}
 		}
@@ -694,21 +726,19 @@ class Graph {
 		this.focus_y.domain([ydtmp[0].data, ydtmp[1].data]).nice();
 		this.context_y.domain(context_yd).nice();
 	}
+	public static depthMaxFunc(num: number, it: ChartDepthData): number {
+		return (num > it.depth) ? num : it.depth;
+	}
 	public updateDepthDomain(): void {
 		const depth_xd = this.depth_x.domain();
 		const depth_yd = this.depth_y.domain();
-		const ydbidmax = d3.max(this.depth_data[1].values, it => it.depth) || 0;
-		const ydaskmax = d3.max(this.depth_data[0].values, it => it.depth) || 0;
-
-		depth_xd[0] = d3.min(this.depth_data[1].values, it => it.price) || 0;
-		depth_xd[1] = d3.max(this.depth_data[0].values, it => it.price) || 0;
+		depth_xd[0] = this.depth_data[1].values.reduce((num, it) => (num < it.price) ? num : it.price, PriceMax);
+		depth_xd[1] = this.depth_data[0].values.reduce((num, it) => (num > it.price) ? num : it.price, PriceMin);
 		depth_yd[0] = 0;
-		if(ydaskmax > ydbidmax){
-			depth_yd[1] = ydaskmax;
-		} else {
-			depth_yd[1] = ydbidmax;
-		}
-
+		depth_yd[1] = Math.max(
+			this.depth_data[0].values.reduce(Graph.depthMaxFunc, PriceMin),
+			this.depth_data[1].values.reduce(Graph.depthMaxFunc, PriceMin)
+		);
 		this.depth_x.domain(depth_xd);
 		this.depth_y.domain(depth_yd).nice();
 	}
@@ -786,8 +816,10 @@ class Client {
 			console.log('切断しました。');
 		};
 		this.ws.onmessage = (msg) => {
-			const obj: ZaifStream = JSON.parse(msg.data);
-			this.update(obj);
+			const obj = JSON.parse(msg.data);
+			if(isZaifStream(obj)){
+				this.update(obj);
+			}
 		};
 	}
 	public dispose(): void {
@@ -799,11 +831,7 @@ class Client {
 	}
 	private static getCurrencyPair(hash: string = "#btc_jpy"): CurrencyPair {
 		const cp = hash.slice(1);
-		const i = currency_pair_list.findIndex(data => data === cp);
-		if(i < 0){
-			return currency_pair_list[0];
-		}
-		return currency_pair_list[i];
+		return currency_pair_list.find(data => data === cp) || currency_pair_list[0];
 	}
 	private getWebsocketURL(): string {
 		return streamBaseURL + this.currency_pair;
@@ -884,16 +912,14 @@ class Client {
 	}
 	private analyzeBoard(data: readonly [number, number][]): readonly Board[] {
 		let dep = 0;
-		const board: Board[] = [];
-		for(const it of data){
+		return data.map(it => {
 			dep += it[0] * it[1];
-			board.push({
+			return {
 				price: it[0].toLocaleString(),
 				amount: it[1],
 				depth: (dep | 0).toLocaleString()
-			});
-		}
-		return board;
+			};
+		});
 	}
 	public setGraphFocusXAxis(sec: number): void {
 		if(this.graph !== undefined){
@@ -975,7 +1001,7 @@ class Client {
 		}
 		if(ask !== undefined && bid !== undefined && trade !== undefined && this.graph){
 			this.graph.sortContext();
-			this.graph.updateContextDomain();
+			this.graph.updateContextDomain(true);
 			this.graph.draw();
 		}
 	}
