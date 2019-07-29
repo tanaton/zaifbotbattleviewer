@@ -645,7 +645,7 @@ class Graph {
 			}
 		}
 		// 一定時間経過でsummary更新
-		if((date.getTime() - 10) < this.draw_summary_old_date.getTime()){
+		if((date.getTime() - 10) > this.draw_summary_old_date.getTime()){
 			this.draw_summary = true;
 			this.draw_summary_old_date = date;
 		}
