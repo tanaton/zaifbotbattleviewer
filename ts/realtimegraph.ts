@@ -631,7 +631,7 @@ class Graph {
 				while(cd.values.length > 5000){
 					cd.values.shift();
 				}
-				if(update && cd.values.length > 300){
+				if(update && sd.values.length > 250){
 					// contextを要約してsummaryを作る
 					sd.values = Graph.LTTB(cd.values, 200);
 				} else if(update){
