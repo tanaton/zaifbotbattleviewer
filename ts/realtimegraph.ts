@@ -772,7 +772,7 @@ class Graph {
 		const datestart = new Date(Date.now() - (sec * 1000));
 		const l = this.focus_data.length;
 		for(let i = 0; i < l; i++){
-			const c = this.summary_data[i];
+			const c = this.context_data[i];
 			const j = c.values.findIndex(it => it.date >= datestart);
 			if(j >= 0){
 				this.focus_data[i].values = c.values.slice(j);
