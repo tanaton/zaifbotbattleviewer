@@ -1,6 +1,9 @@
 import * as d3 from 'd3';
 import Vue from 'vue';
 
+// 浮動小数点である事を分かりやすくしたい
+type Float = number;
+
 type CurrencyPair = "btc_jpy" | "xem_jpy" | "mona_jpy" | "bch_jpy" | "eth_jpy";
 function isCurrencyPair(a: string): a is CurrencyPair {
 	switch(a){
@@ -225,9 +228,9 @@ class Graph {
 	private readonly focus_margin: Box = {top: 30, right: 10, bottom: 20, left: 60};
 	private focus_width: number;
 	private focus_height: number;
-	private readonly context_margin: Box = {top: 510, right: 10, bottom: 20, left: 60};
-	private context_width: number;
-	private context_height: number;
+	private readonly summary_margin: Box = {top: 510, right: 10, bottom: 20, left: 60};
+	private summary_width: number;
+	private summary_height: number;
 	private readonly depth_margin: Box = {top: 630, right: 10, bottom: 20, left: 60};
 	private depth_width: number;
 	private depth_height: number;
@@ -238,7 +241,7 @@ class Graph {
 	private svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, unknown>;
 	private focus: d3.Selection<SVGGElement, Context, SVGSVGElement, unknown>;
 	private focus_legend: d3.Selection<SVGGElement, Legend, SVGSVGElement, unknown>;
-	private context: d3.Selection<SVGGElement, Context, SVGSVGElement, unknown>;
+	private summary: d3.Selection<SVGGElement, Context, SVGSVGElement, unknown>;
 	private depth: d3.Selection<SVGGElement, Depth, SVGSVGElement, unknown>;
 	private depth_area: d3.Selection<SVGGElement, Depth, SVGSVGElement, unknown>;
 
@@ -249,12 +252,12 @@ class Graph {
 	private focus_line: d3.Line<ChartContextData>;
 	private focus_path_d: (d: Context) => string | null;
 
-	private context_x: d3.ScaleTime<number, number>;
-	private context_y: d3.ScaleLinear<number, number>;
-	private context_xAxis: d3.Axis<Date>;
-	private context_yAxis: d3.Axis<number | { valueOf(): number; }>;
-	private context_line: d3.Line<ChartContextData>;
-	private context_path_d: (d: Context) => string | null;
+	private summary_x: d3.ScaleTime<number, number>;
+	private summary_y: d3.ScaleLinear<number, number>;
+	private summary_xAxis: d3.Axis<Date>;
+	private summary_yAxis: d3.Axis<number | { valueOf(): number; }>;
+	private summary_line: d3.Line<ChartContextData>;
+	private summary_path_d: (d: Context) => string | null;
 
 	private depth_x: d3.ScaleLinear<number, number>;
 	private depth_y: d3.ScaleLinear<number, number>;
@@ -265,13 +268,14 @@ class Graph {
 	private depth_line_area: d3.Area<ChartDepthData>;
 	private depth_area_d: (d: Depth) => string | null;
 
-	private context_color: d3.ScaleOrdinal<string, string>;
-	private context_path_stroke: (d: {name: string}) => string;
+	private summary_color: d3.ScaleOrdinal<string, string>;
+	private summary_path_stroke: (d: {name: string}) => string;
 	private focus_legend_transform: (d: Legend, i: number) => string;
 	private focus_legend_update: (d: Legend) => string;
 
 	private focus_data: Context[] = [];
 	private focus_data_legend: Legend[] = [];
+	private summary_data: Context[] = [];
 	private context_data: Context[] = [];
 	private depth_data: [Depth, Depth] = [{
 		name: "Asks",
@@ -284,7 +288,7 @@ class Graph {
 	private datamap: {[key in Signal]?: boolean} = {};
 
 	private draw_focus: boolean = false;
-	private draw_context: boolean = false;
+	private draw_summary: boolean = false;
 	private draw_depth: boolean = false;
 	private focus_domain_yaxis_update: boolean = false;
 	private focus_xaxis_sec: number = 120;
@@ -292,8 +296,8 @@ class Graph {
 	constructor(obj: Readonly<Stream>) {
 		this.focus_width = 850 - this.focus_margin.left - this.focus_margin.right;
 		this.focus_height = 500 - this.focus_margin.top - this.focus_margin.bottom;
-		this.context_width = 850 - this.context_margin.left - this.context_margin.right;
-		this.context_height = 620 - this.context_margin.top - this.context_margin.bottom;
+		this.summary_width = 850 - this.summary_margin.left - this.summary_margin.right;
+		this.summary_height = 620 - this.summary_margin.top - this.summary_margin.bottom;
 		this.depth_width = 850 - this.depth_margin.left - this.depth_margin.right;
 		this.depth_height = 760 - this.depth_margin.top - this.depth_margin.bottom;
 		this.ydtmp = [{
@@ -326,26 +330,26 @@ class Graph {
 			.y(d => this.focus_y(d.data));
 		this.focus_path_d = d => this.focus_line(d.values);
 
-		this.context_x = d3.scaleTime()
+		this.summary_x = d3.scaleTime()
 			.domain(this.focus_x.domain())
-			.range([0, this.context_width]);
-		this.context_y = d3.scaleLinear()
+			.range([0, this.summary_width]);
+		this.summary_y = d3.scaleLinear()
 			.domain(this.focus_y.domain())
-			.range([this.context_height, 0]);
-		this.context_xAxis = d3.axisBottom<Date>(this.context_x)
-			.tickSizeInner(-this.context_height)
+			.range([this.summary_height, 0]);
+		this.summary_xAxis = d3.axisBottom<Date>(this.summary_x)
+			.tickSizeInner(-this.summary_height)
 			.tickFormat(timeFormat)
 			.tickPadding(7)
 			.ticks(5);
-		this.context_yAxis = d3.axisLeft(this.context_y)
-			.tickSizeInner(-this.context_width)
+		this.summary_yAxis = d3.axisLeft(this.summary_y)
+			.tickSizeInner(-this.summary_width)
 			.tickPadding(7);
-		this.context_line = d3.line<ChartContextData>()
+		this.summary_line = d3.line<ChartContextData>()
 			//.curve(d3.curveLinear)
 			.curve(d3.curveStepAfter)
-			.x(d => this.context_x(d.date))
-			.y(d => this.context_y(d.data));
-		this.context_path_d = d => this.context_line(d.values);
+			.x(d => this.summary_x(d.date))
+			.y(d => this.summary_y(d.data));
+		this.summary_path_d = d => this.summary_line(d.values);
 
 		this.depth_x = d3.scaleLinear()
 			.domain([0, 0])
@@ -384,8 +388,8 @@ class Graph {
 			.y1(d => this.depth_y(d.depth));
 		this.depth_area_d = d => this.depth_line_area(d.values);
 
-		this.context_color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
-		this.context_path_stroke = d => this.context_color(d.name);
+		this.summary_color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
+		this.summary_path_stroke = d => this.summary_color(d.name);
 /*
 		this.text_transform = (d, i) => {
 			const dd = d.values[d.values.length - 1];
@@ -416,11 +420,11 @@ class Graph {
 			.attr("transform", "translate(0,0)")
 			.attr("class", "focus-legend");
 
-		this.context = this.svg.selectAll<SVGGElement, Context>(".context")
-			.data(this.context_data)
+		this.summary = this.svg.selectAll<SVGGElement, Context>(".summary")
+			.data(this.summary_data)
 			.enter().append("g")
-			.attr("transform", `translate(${this.context_margin.left},${this.context_margin.top})`)
-			.attr("class", "context");
+			.attr("transform", `translate(${this.summary_margin.left},${this.summary_margin.top})`)
+			.attr("class", "summary");
 
 		this.depth = this.svg.selectAll<SVGGElement, Depth>(".depth")
 			.data(this.depth_data)
@@ -436,7 +440,7 @@ class Graph {
 
 		this.focus.append("path")				// 拡大グラフ
 			.attr("class", "line")
-			.style("stroke", this.context_path_stroke);
+			.style("stroke", this.summary_path_stroke);
 
 		this.focus.append("g") 					// x目盛軸
 			.attr("class", "x axis")
@@ -458,7 +462,7 @@ class Graph {
 			.attr("y", 10)
 			.attr("width", 10)
 			.attr("height", 10)
-			.style("fill", this.context_path_stroke)
+			.style("fill", this.summary_path_stroke)
 			.attr("transform", this.focus_legend_transform);
 
 		this.focus_legend.append('text')		// 凡例の文言
@@ -469,27 +473,27 @@ class Graph {
 			.style("text-anchor", "start")
 			.attr("transform", this.focus_legend_transform);
 
-		this.context.append("path")				// 全体グラフ
+		this.summary.append("path")				// 全体グラフ
 			.attr("class", "line")
-			.style("stroke", this.context_path_stroke);
+			.style("stroke", this.summary_path_stroke);
 
-		this.context.append("g")				// 全体x目盛軸
+		this.summary.append("g")				// 全体x目盛軸
 			.attr("class", "x axis")
-			.attr("transform", `translate(0,${this.context_height})`)
-			.call(this.context_xAxis);
+			.attr("transform", `translate(0,${this.summary_height})`)
+			.call(this.summary_xAxis);
 
-		this.context.append("g")				// 全体y目盛軸
+		this.summary.append("g")				// 全体y目盛軸
 			.attr("class", "y axis")
-			.call(this.context_yAxis);
+			.call(this.summary_yAxis);
 
 		this.depth.append("path")				// 深さグラフ
 			.attr("class", "line")
-			.style("stroke", this.context_path_stroke);
+			.style("stroke", this.summary_path_stroke);
 
 		this.depth_area.append("path")			// 深さグラフ領域
 			.attr("class", "depth_area_path")
 			.attr("opacity", .3)
-			.style("fill", this.context_path_stroke);
+			.style("fill", this.summary_path_stroke);
 
 		this.depth.append("g") 					// 深さx目盛軸
 			.attr("class", "x axis")
@@ -501,7 +505,7 @@ class Graph {
 			.call(this.depth_yAxis);
 	}
 	private init(data: Readonly<Stream>): void {
-		this.context_color.domain([]);
+		this.summary_color.domain([]);
 		this.addsig(data);
 		//this.addContext(data);
 		//this.addDepth(data);
@@ -547,26 +551,24 @@ class Graph {
 		for(const key in sigs){
 			if(isSignal(key) && sigs.hasOwnProperty(key) && this.datamap[key] === undefined){
 				const data = (sigs[key] || {Data: 0}).Data;
-				const context_color = this.context_color.domain();
-				context_color.push(key);
-				this.context_color.domain(context_color);
-				this.focus_data.push({
-					name: key,
-					values: [{
-						date: date,
-						data: data
-					}]
-				});
+				const summary_color = this.summary_color.domain();
+				summary_color.push(key);
+				this.summary_color.domain(summary_color);
+				const newobj = () => {
+					return {
+						name: key,
+						values: [{
+							date: date,
+							data: data
+						}]
+					};
+				}
+				this.context_data.push(newobj());
+				this.focus_data.push(newobj());
+				this.summary_data.push(newobj());
 				this.focus_data_legend.push({
 					name: key,
 					last_price: 0
-				});
-				this.context_data.push({
-					name: key,
-					values: [{
-						date: date,
-						data: data
-					}]
 				});
 				this.datamap[key] = true;
 				ret = true;
@@ -601,6 +603,7 @@ class Graph {
 		const sigs = data.Signals || {};
 		for(let i = 0; i < l; i++){
 			const fd = this.focus_data[i];
+			const sd = this.summary_data[i];
 			const cd = this.context_data[i];
 			const key = fd.name;
 			if(sigs[key] !== undefined){
@@ -614,8 +617,8 @@ class Graph {
 					date: date,
 					data: d
 				});
-				if(update || cd.values.length < 100){
-					this.draw_context = true;
+				if(update || cd.values.length < 50){
+					this.draw_summary = true;
 				}
 				this.focus_data_legend[i].last_price = d;
 				// データサイズが大きくなり過ぎないように調節
@@ -627,6 +630,16 @@ class Graph {
 				}
 				while(cd.values.length > 5000){
 					cd.values.shift();
+				}
+				if(update && cd.values.length > 300){
+					// contextを要約してsummaryを作る
+					sd.values = Graph.LTTB(cd.values, 200);
+				} else if(update){
+					// summaryにも追加
+					Graph.appendData(sd, {
+						date: date,
+						data: d
+					});
 				}
 			}
 		}
@@ -658,11 +671,11 @@ class Graph {
 		const date = new Date();
 		const datestart = new Date(+date - (this.focus_xaxis_sec * 1000));
 		const focus_xd = [datestart, date];
-		const context_xd = this.context_x.domain();
-		const context_yd = this.context_y.domain();
+		const summary_xd = this.summary_x.domain();
+		const summary_yd = this.summary_y.domain();
 		const ydtmp = this.ydtmp;
-		context_xd[0] = date;
-		context_xd[1] = date;
+		summary_xd[0] = date;
+		summary_xd[1] = date;
 
 		// 縦軸の値の幅を設定
 		if(this.focus_domain_yaxis_update === false && all === false){
@@ -694,27 +707,27 @@ class Graph {
 			}, PriceMin);
 		}
 		if(all){
-			for(const cd of this.context_data){
-				context_yd[0] = cd.values.reduce(Graph.contextMinFunc, context_yd[0]);
-				context_yd[1] = cd.values.reduce(Graph.contextMaxFunc, context_yd[1]);
-				if(context_xd[0] > cd.values[0].date){
-					context_xd[0] = cd.values[0].date;
+			for(const cd of this.summary_data){
+				summary_yd[0] = cd.values.reduce(Graph.contextMinFunc, summary_yd[0]);
+				summary_yd[1] = cd.values.reduce(Graph.contextMaxFunc, summary_yd[1]);
+				if(summary_xd[0] > cd.values[0].date){
+					summary_xd[0] = cd.values[0].date;
 				}
 			}
 		} else {
-			for(const cd of this.context_data){
+			for(const cd of this.summary_data){
 				const l = cd.values.length - 1;
 				if(l >= 0){
 					const data = cd.values[l].data;
 					// 最大値の更新
-					if(context_yd[0] > data){
-						context_yd[0] = data;
+					if(summary_yd[0] > data){
+						summary_yd[0] = data;
 					}
-					if(context_yd[1] < data){
-						context_yd[1] = data;
+					if(summary_yd[1] < data){
+						summary_yd[1] = data;
 					}
-					if(context_xd[0] > cd.values[0].date){
-						context_xd[0] = cd.values[0].date;
+					if(summary_xd[0] > cd.values[0].date){
+						summary_xd[0] = cd.values[0].date;
 					}
 				}
 			}
@@ -722,9 +735,9 @@ class Graph {
 	
 		this.focus_domain_yaxis_update = false;
 		this.focus_x.domain(focus_xd);
-		this.context_x.domain(context_xd);
+		this.summary_x.domain(summary_xd);
 		this.focus_y.domain([ydtmp[0].data, ydtmp[1].data]).nice();
-		this.context_y.domain(context_yd).nice();
+		this.summary_y.domain(summary_yd).nice();
 	}
 	public static depthMaxFunc(num: number, it: ChartDepthData): number {
 		return (num > it.depth) ? num : it.depth;
@@ -746,14 +759,14 @@ class Graph {
 		const l = this.focus_data.length;
 		for(let i = 0; i < l; i++){
 			this.focus_data[i].values.sort((a, b): number => a.date.getTime() - b.date.getTime());
-			this.context_data[i].values.sort((a, b): number => a.date.getTime() - b.date.getTime());
+			this.summary_data[i].values.sort((a, b): number => a.date.getTime() - b.date.getTime());
 		}
 	}
 	public setFocusXAxis(sec: number = 120): void {
 		const datestart = new Date(Date.now() - (sec * 1000));
 		const l = this.focus_data.length;
 		for(let i = 0; i < l; i++){
-			const c = this.context_data[i];
+			const c = this.summary_data[i];
 			const j = c.values.findIndex(it => it.date >= datestart);
 			if(j >= 0){
 				this.focus_data[i].values = c.values.slice(j);
@@ -780,12 +793,12 @@ class Graph {
 			this.focus.select<SVGGElement>(".x.axis").call(this.focus_xAxis);			// 拡大x軸アップデート
 			this.focus.select<SVGGElement>(".y.axis").call(this.focus_yAxis); 			// 拡大y軸アップデート
 		}
-		if(this.draw_context){
-			this.draw_context = false;
-			this.context.select<SVGPathElement>("path").attr("d", this.context_path_d);	// 全体グラフアップデート
-			this.context.select<SVGGElement>(".x.axis").call(this.context_xAxis);		// 全体x軸アップデート
-			this.context_yAxis.tickValues(this.context_y.domain());
-			this.context.select<SVGGElement>(".y.axis").call(this.context_yAxis);		// 全体x軸アップデート
+		if(this.draw_summary){
+			this.draw_summary = false;
+			this.summary.select<SVGPathElement>("path").attr("d", this.summary_path_d);	// 全体グラフアップデート
+			this.summary.select<SVGGElement>(".x.axis").call(this.summary_xAxis);		// 全体x軸アップデート
+			this.summary_yAxis.tickValues(this.summary_y.domain());
+			this.summary.select<SVGGElement>(".y.axis").call(this.summary_yAxis);		// 全体x軸アップデート
 		}
 		if(this.draw_depth){
 			this.draw_depth = false;
@@ -794,6 +807,62 @@ class Graph {
 			this.depth.select<SVGGElement>(".y.axis").call(this.depth_yAxis); 			// 深さy軸アップデート
 			this.depth_area.select<SVGPathElement>("path").attr("d", this.depth_area_d);// 深さグラフ領域アップデート
 		}
+	}
+
+	// https://github.com/dgryski/go-lttb を参考に作成
+	public static LTTB(data: ChartContextData[], threshold: number): ChartContextData[] {
+		if(threshold >= data.length || threshold == 0){
+			return data;	// 無し
+		}
+		// 最初の点は残す
+		const sampled: ChartContextData[] = [data[0]];
+		// Bucket size. Leave room for start and end data points
+		const every: Float = (data.length - 2) / (threshold - 2);
+		let bucketStart: number = 1;
+		let bucketCenter: number = (every | 0) + 1;
+		let a: number = 0;
+		for(let i: number = 0; i < threshold - 2; i++){
+			const bucketEnd: number = (((i + 2) * every) | 0) + 1;
+
+			// Calculate point average for next bucket (containing c)
+			let avgRangeStart: number = bucketCenter
+			let avgRangeEnd: number = bucketEnd
+
+			if(avgRangeEnd >= data.length){
+				avgRangeEnd = data.length;
+			}
+			// float
+			const avgRangeLength: Float = avgRangeEnd - avgRangeStart;
+
+			let avgX: Float = 0;
+			let avgY: Float = 0;
+			for(; avgRangeStart < avgRangeEnd; avgRangeStart++){
+				avgX += data[avgRangeStart].date.getTime();
+				avgY += data[avgRangeStart].data;
+			}
+			avgX /= avgRangeLength;
+			avgY /= avgRangeLength;
+			// Point a
+			const pointAX = data[a].date.getTime();
+			const pointAY = data[a].data;
+			let maxArea: Float = PriceMin;
+			for(; bucketStart < bucketCenter; bucketStart++){
+				const d = data[bucketStart];
+				// Calculate triangle area over three buckets
+				let area: Float = (pointAX - avgX) * (d.data - pointAY) - (pointAX - d.date.getTime()) * (avgY - pointAY);
+				// 絶対値が欲しい？特にいらねー気もする
+				// 小数点も考慮した絶対値（相対的で良い）を得るためには2乗するのが最速？
+				area *= area;
+				if(area > maxArea){
+					maxArea = area;
+					a = bucketStart;			// Next a is this b
+				}
+			}
+			sampled.push(data[a]);				// Pick this point from the bucket
+			bucketCenter = bucketEnd;
+		}
+		sampled.push(data[data.length - 1]);	// Always add last
+		return sampled;
 	}
 }
 
