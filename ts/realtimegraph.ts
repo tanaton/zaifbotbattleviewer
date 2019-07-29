@@ -819,10 +819,10 @@ class Graph {
 		// Bucket size. Leave room for start and end data points
 		const every: Float = (data.length - 2) / (threshold - 2);
 		let bucketStart: number = 1;
-		let bucketCenter: number = (every | 0) + 1;
+		let bucketCenter: number = Math.floor(every) + 1;
 		let a: number = 0;
 		for(let i: number = 0; i < threshold - 2; i++){
-			const bucketEnd: number = (((i + 2) * every) | 0) + 1;
+			const bucketEnd: number = Math.floor((i + 2) * every) + 1;
 
 			// Calculate point average for next bucket (containing c)
 			let avgRangeStart: number = bucketCenter
@@ -833,7 +833,6 @@ class Graph {
 			}
 			// float
 			const avgRangeLength: Float = avgRangeEnd - avgRangeStart;
-
 			let avgX: Float = 0;
 			let avgY: Float = 0;
 			for(; avgRangeStart < avgRangeEnd; avgRangeStart++){
@@ -850,7 +849,7 @@ class Graph {
 				const d = data[bucketStart];
 				// Calculate triangle area over three buckets
 				let area: Float = (pointAX - avgX) * (d.data - pointAY) - (pointAX - d.date.getTime()) * (avgY - pointAY);
-				// 絶対値が欲しい？特にいらねー気もする
+				// 絶対値が欲しい？
 				// 小数点も考慮した絶対値（相対的で良い）を得るためには2乗するのが最速？
 				area *= area;
 				if(area > maxArea){
