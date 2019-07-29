@@ -289,6 +289,7 @@ class Graph {
 
 	private draw_focus: boolean = false;
 	private draw_summary: boolean = false;
+	private draw_summary_old_date: Date = new Date();
 	private draw_depth: boolean = false;
 	private focus_domain_yaxis_update: boolean = false;
 	private focus_xaxis_sec: number = 120;
@@ -530,7 +531,7 @@ class Graph {
 				this.updateContextDomain();
 				this.draw();
 			}
-		}, 1000 / 30);
+		}, 1000 / 10);
 	}
 	public dispose(): void {
 		if(this.tid){
@@ -617,9 +618,6 @@ class Graph {
 					date: date,
 					data: d
 				});
-				if(update || cd.values.length < 50){
-					this.draw_summary = true;
-				}
 				this.focus_data_legend[i].last_price = d;
 				// データサイズが大きくなり過ぎないように調節
 				while(fd.values.length > 2000){
@@ -641,7 +639,15 @@ class Graph {
 						data: d
 					});
 				}
+				if(sd.values.length < 3){
+					this.draw_summary = true;
+				}
 			}
+		}
+		// 一定時間経過でsummary更新
+		if((date.getTime() - 10) < this.draw_summary_old_date.getTime()){
+			this.draw_summary = true;
+			this.draw_summary_old_date = date;
 		}
 	}
 	public addDepth(data: Readonly<Stream>): void {
