@@ -826,15 +826,16 @@ class Graph {
 			return data as ChartContextData[];	// 無し
 		}
 		const abs = Math.abs;
+		const floor = Math.floor;
 		// 最初の点は残す
 		const sampled: ChartContextData[] = [data[0]];
 		// Bucket size. Leave room for start and end data points
 		const every: Float = (data.length - 2) / (threshold - 2);
 		let bucketStart: number = 1;
-		let bucketCenter: number = Math.floor(every) + 1;
+		let bucketCenter: number = floor(every) + 1;
 		let a: number = 0;
 		for(let i: number = 0; i < threshold - 2; i++){
-			const bucketEnd: number = Math.floor((i + 2) * every) + 1;
+			const bucketEnd: number = floor((i + 2) * every) + 1;
 
 			// Calculate point average for next bucket (containing c)
 			let avgRangeStart: number = bucketCenter
