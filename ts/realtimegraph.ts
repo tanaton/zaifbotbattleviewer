@@ -56,8 +56,9 @@ const historyDataURL = "/api/zaif/1/oldstream/";
 const currency_pair_list: readonly CurrencyPair[] = ["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"];
 const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
-const PriceMax = 10000000;
-const PriceMin = -10000000;
+const PriceMax = 10_000_000;
+const PriceMin = -10_000_000;
+const summaryUpdateInterval = 10 * 1000;	// 10秒
 
 type Box = {
 	readonly top: number;
@@ -153,7 +154,7 @@ function isZaifStream(a: any): a is ZaifStream {
 }
 
 type StreamSignals = {
-	[key in Signal]?: {
+	[key in Signal]: {
 		readonly Data: number;
 	};
 };
@@ -515,7 +516,11 @@ class Graph {
 			const data: Stream = {
 				Name: "",
 				Date: new Date(),
-				Signals: {}
+				Signals: {
+					"Asks": {Data: 0},
+					"Bids": {Data: 0},
+					"LastPrice": {Data: 0}
+				}
 			};
 			let flag = false;
 			for(const it of this.focus_data){
@@ -601,14 +606,14 @@ class Graph {
 		const date = data.Date;
 		const datestart = new Date(Date.now() - (this.focus_xaxis_sec * 1000));
 		const l = this.focus_data.length;
-		const sigs = data.Signals || {};
+		const sigs = data.Signals;
 		for(let i = 0; i < l; i++){
 			const fd = this.focus_data[i];
 			const sd = this.summary_data[i];
 			const cd = this.context_data[i];
 			const key = fd.name;
-			if(sigs[key] !== undefined){
-				const d = (sigs[key] || {Data: 0}).Data;
+			if(sigs && sigs[key] !== undefined){
+				const d = sigs[key].Data;
 				Graph.appendData(fd, {
 					date: date,
 					data: d
@@ -645,7 +650,7 @@ class Graph {
 			}
 		}
 		// 一定時間経過でsummary更新
-		if((date.getTime() - 10) > this.draw_summary_old_date.getTime()){
+		if((date.getTime() - summaryUpdateInterval) > this.draw_summary_old_date.getTime()){
 			this.draw_summary = true;
 			this.draw_summary_old_date = date;
 		}
@@ -675,7 +680,7 @@ class Graph {
 	}
 	public updateContextDomain(all = false): void {
 		const date = new Date();
-		const datestart = new Date(+date - (this.focus_xaxis_sec * 1000));
+		const datestart = new Date(date.getTime() - (this.focus_xaxis_sec * 1000));
 		const focus_xd = [datestart, date];
 		const summary_xd = this.summary_x.domain();
 		const summary_yd = this.summary_y.domain();
@@ -816,10 +821,11 @@ class Graph {
 	}
 
 	// https://github.com/dgryski/go-lttb を参考に作成
-	public static LTTB(data: ChartContextData[], threshold: number): ChartContextData[] {
+	public static LTTB(data: readonly ChartContextData[], threshold: number): ChartContextData[] {
 		if(threshold >= data.length || threshold == 0){
-			return data;	// 無し
+			return data as ChartContextData[];	// 無し
 		}
+		const abs = Math.abs;
 		// 最初の点は残す
 		const sampled: ChartContextData[] = [data[0]];
 		// Bucket size. Leave room for start and end data points
@@ -854,10 +860,7 @@ class Graph {
 			for(; bucketStart < bucketCenter; bucketStart++){
 				const d = data[bucketStart];
 				// Calculate triangle area over three buckets
-				let area: Float = (pointAX - avgX) * (d.data - pointAY) - (pointAX - d.date.getTime()) * (avgY - pointAY);
-				// 絶対値が欲しい？
-				// 小数点も考慮した絶対値（相対的で良い）を得るためには2乗するのが最速？
-				area *= area;
+				const area = abs(((pointAX - avgX) * (d.data - pointAY)) - ((pointAX - d.date.getTime()) * (avgY - pointAY)));
 				if(area > maxArea){
 					maxArea = area;
 					a = bucketStart;			// Next a is this b
