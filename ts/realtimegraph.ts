@@ -584,20 +584,21 @@ class Graph {
 	}
 	private static appendData(data: Context, val: Readonly<ChartContextData>): boolean {
 		let ret = false;
-		const old = data.values.length > 0 ? data.values[data.values.length - 1] : undefined;
+		const d = data.values;
+		const old = d.length > 0 ? d[d.length - 1] : undefined;
 		// 点の数を減らす処理
 		if(old !== undefined){
-			const oldold = data.values.length > 1 ? data.values[data.values.length - 2] : undefined;
+			const oldold = d.length > 1 ? d[d.length - 2] : undefined;
 			if((oldold !== undefined) && (oldold.data === old.data) && (old.data === val.data)){
 				// 2つ前と1つ前と今回のデータが同じ場合
 				// 1つ前のデータを今回のデータに更新
-				data.values[data.values.length - 1].date = val.date;
+				d[d.length - 1].date = val.date;
 			} else {
-				data.values.push(val);
+				d.push(val);
 				ret = true;
 			}
 		} else {
-			data.values.push(val);
+			d.push(val);
 			ret = true;
 		}
 		return ret;
@@ -625,7 +626,7 @@ class Graph {
 				});
 				this.focus_data_legend[i].last_price = d;
 				// データサイズが大きくなり過ぎないように調節
-				while(fd.values.length > 2000){
+				while(fd.values.length > 1000){
 					fd.values.shift();
 				}
 				while((fd.values.length > 2) && (fd.values[0].date < datestart) && (fd.values[1].date < datestart)){
@@ -770,6 +771,7 @@ class Graph {
 		const l = this.focus_data.length;
 		for(let i = 0; i < l; i++){
 			this.focus_data[i].values.sort((a, b): number => a.date.getTime() - b.date.getTime());
+			this.context_data[i].values.sort((a, b): number => a.date.getTime() - b.date.getTime());
 			this.summary_data[i].values.sort((a, b): number => a.date.getTime() - b.date.getTime());
 		}
 	}
@@ -786,7 +788,12 @@ class Graph {
 		this.focus_domain_yaxis_update = true;
 		this.focus_xaxis_sec = sec;
 	}
-	public draw(): void {
+	public draw(all = false): void {
+		if(all){
+			this.draw_focus = true;
+			this.draw_summary = true;
+			this.draw_depth = true;
+		}
 		if(this.drawing){
 			this.drawing = false;
 			this.rid = window.requestAnimationFrame((): void => {
@@ -1080,7 +1087,7 @@ class Client {
 		if(ask !== undefined && bid !== undefined && trade !== undefined && this.graph){
 			this.graph.sortContext();
 			this.graph.updateContextDomain(true);
-			this.graph.draw();
+			this.graph.draw(true);
 		}
 	}
 }
