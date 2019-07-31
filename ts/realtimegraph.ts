@@ -59,6 +59,7 @@ const floatFormat = d3.format(".1f");
 const PriceMax = 10_000_000;
 const PriceMin = -10_000_000;
 const summaryUpdateInterval = 10 * 1000;	// 10秒
+const focusUpdateIntervalFPS = 10;
 
 type Box = {
 	readonly top: number;
@@ -204,6 +205,13 @@ type Display = {
 	trades: readonly TradeView[];
 	readonly focus: {
 		readonly xaxis: {
+			selected: number;
+			options: readonly {
+				readonly text: string;
+				readonly value: number;
+			}[];
+		};
+		readonly fps: {
 			selected: number;
 			options: readonly {
 				readonly text: string;
@@ -511,7 +519,12 @@ class Graph {
 		this.addsig(data);
 		//this.addContext(data);
 		//this.addDepth(data);
-
+		this.startTimer();
+	}
+	private startTimer(fps = focusUpdateIntervalFPS): void {
+		if(fps){
+			fps = focusUpdateIntervalFPS;
+		}
 		this.tid = window.setInterval((): void => {
 			const data: Stream = {
 				Name: "",
@@ -536,14 +549,23 @@ class Graph {
 				this.updateContextDomain();
 				this.draw();
 			}
-		}, 1000 / 10);
+		}, 1000 / fps);
 	}
-	public dispose(): void {
+	private stopTimer(): void {
 		if(this.tid){
 			window.clearInterval(this.tid);
+			this.tid = 0;
 		}
+	}
+	public restartTimer(fps: number): void {
+		this.stopTimer();
+		this.startTimer(fps);
+	}
+	public dispose(): void {
+		this.stopTimer();
 		if(this.rid){
 			window.cancelAnimationFrame(this.rid);
+			this.rid = 0;
 		}
 		const doc = document.getElementById(svgID);
 		if(doc){
@@ -1011,6 +1033,11 @@ class Client {
 			this.graph.setFocusXAxis(sec);
 		}
 	}
+	public setGraphFocusFPS(sec: number): void {
+		if(this.graph !== undefined){
+			this.graph.restartTimer(sec);
+		}
+	}
 	private createGraph(obj: Readonly<Stream>): void {
 		this.graph = new Graph(obj);
 	}
@@ -1111,6 +1138,16 @@ const dispdata: Display = {
 				{text: "10分", value: 600},
 				{text: "30分", value: 1800}
 			]
+		},
+		fps: {
+			selected: 10,
+			options: [
+				{text: "1fps", value: 1},
+				{text: "5fps", value: 5},
+				{text: "10fps", value: 10},
+				{text: "30fps", value: 30},
+				{text: "60fps", value: 60}
+			]
 		}
 	},
 	currency_pair: {
@@ -1132,6 +1169,9 @@ const vm = new Vue({
 	watch: {
 		"focus.xaxis.selected": (n) => {
 			cli.setGraphFocusXAxis(n);
+		},
+		"focus.fps.selected": (n) => {
+			cli.setGraphFocusFPS(n);
 		}
 	}
 });
