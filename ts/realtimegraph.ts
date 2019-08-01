@@ -582,7 +582,7 @@ class Graph {
 				const summary_color = this.summary_color.domain();
 				summary_color.push(key);
 				this.summary_color.domain(summary_color);
-				const newobj = () => {
+				const newobj = (): Context => {
 					return {
 						name: key,
 						values: [{
@@ -590,7 +590,7 @@ class Graph {
 							data: data
 						}]
 					};
-				}
+				};
 				this.context_data.push(newobj());
 				this.focus_data.push(newobj());
 				this.summary_data.push(newobj());
@@ -604,23 +604,34 @@ class Graph {
 		}
 		return ret;
 	}
-	private static appendData(data: Context, val: Readonly<ChartContextData>): boolean {
+	// copy on write的な戦略でメモリ管理する
+	private static appendData(data: Context, val: Readonly<ChartContextData>, realtime?: boolean): boolean {
 		let ret = false;
-		const d = data.values;
-		const old = d.length > 0 ? d[d.length - 1] : undefined;
+		const dv = data.values;
+		const old = dv.length > 0 ? dv[dv.length - 1] : undefined;
 		// 点の数を減らす処理
 		if(old !== undefined){
-			const oldold = d.length > 1 ? d[d.length - 2] : undefined;
-			if((oldold !== undefined) && (oldold.data === old.data) && (old.data === val.data)){
-				// 2つ前と1つ前と今回のデータが同じ場合
-				// 1つ前のデータを今回のデータに更新
-				d[d.length - 1].date = val.date;
-			} else {
-				d.push(val);
+			if(realtime){
+				// リアルタイム性が欲しい場合
+				const oldold = dv.length > 1 ? dv[dv.length - 2] : undefined;
+				if((oldold !== undefined) && (oldold.data === old.data) && (old.data === val.data)){
+					// 2つ前と1つ前と今回のデータが同じ場合
+					// 1つ前のデータを今回の時間に更新
+					dv[dv.length - 1] = {
+						date: val.date,
+						data: old.data
+					}
+				} else {
+					dv.push(val);
+					ret = true;
+				}
+			} else if(old.data !== val.data){
+				// 違うデータの場合のみ更新
+				dv.push(val);
 				ret = true;
 			}
 		} else {
-			d.push(val);
+			dv.push(val);
 			ret = true;
 		}
 		return ret;
@@ -637,15 +648,13 @@ class Graph {
 			const key = fd.name;
 			if(sigs && sigs[key] !== undefined){
 				const d = sigs[key].Data;
-				Graph.appendData(fd, {
+				const ccd: ChartContextData = {
 					date: date,
 					data: d
-				});
+				};
+				Graph.appendData(fd, ccd, true);
 				this.draw_focus = true;
-				const update = Graph.appendData(cd, {
-					date: date,
-					data: d
-				});
+				const update = Graph.appendData(cd, ccd);
 				this.focus_data_legend[i].last_price = d;
 				// データサイズが大きくなり過ぎないように調節
 				while(fd.values.length > 1000){
@@ -662,10 +671,7 @@ class Graph {
 					sd.values = Graph.LTTB(cd.values, 200);
 				} else if(update){
 					// summaryにも追加
-					Graph.appendData(sd, {
-						date: date,
-						data: d
-					});
+					Graph.appendData(sd, ccd);
 				}
 				if(sd.values.length < 3){
 					this.draw_summary = true;
@@ -801,10 +807,10 @@ class Graph {
 		const datestart = new Date(Date.now() - (sec * 1000));
 		const l = this.focus_data.length;
 		for(let i = 0; i < l; i++){
-			const c = this.context_data[i];
-			const j = c.values.findIndex(it => it.date >= datestart);
+			const cv = this.context_data[i].values;
+			const j = cv.findIndex(it => it.date >= datestart);
 			if(j >= 0){
-				this.focus_data[i].values = c.values.slice(j);
+				this.focus_data[i].values = cv.slice(j);
 			}
 		}
 		this.focus_domain_yaxis_update = true;
