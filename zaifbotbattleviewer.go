@@ -379,13 +379,12 @@ func createDir(p string) error {
 }
 
 func (si *StoreItem) reset(date time.Time, name string) error {
+	si.date = date
 	p := si.createPathTmp()
 	fp, err := os.Create(p)
 	if err != nil {
 		return err
 	}
-	si.date = date
-	si.name = name
 	si.fp = fp
 	si.gw.Reset(si.fp)
 	si.w.Reset(si.gw)
