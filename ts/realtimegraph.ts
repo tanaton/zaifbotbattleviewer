@@ -519,37 +519,36 @@ class Graph {
 		this.addsig(data);
 		//this.addContext(data);
 		//this.addDepth(data);
-		this.startTimer();
+		this.startTimer(focusUpdateIntervalFPS);
 	}
-	private startTimer(fps = focusUpdateIntervalFPS): void {
+	private startTimer(fps: number): void {
 		if(fps){
-			fps = focusUpdateIntervalFPS;
+			this.tid = window.setInterval((): void => {
+				const data: Stream = {
+					Name: "",
+					Date: new Date(),
+					Signals: {
+						"Asks": {Data: 0},
+						"Bids": {Data: 0},
+						"LastPrice": {Data: 0}
+					}
+				};
+				let flag = false;
+				for(const it of this.focus_data){
+					if(it.values.length > 0 && data.Signals !== undefined){
+						data.Signals[it.name] = {
+							Data: it.values[it.values.length - 1].data
+						};
+						flag = true;
+					}
+				}
+				if(flag){
+					this.addContext(data);
+					this.updateContextDomain();
+					this.draw();
+				}
+			}, 1000 / fps);
 		}
-		this.tid = window.setInterval((): void => {
-			const data: Stream = {
-				Name: "",
-				Date: new Date(),
-				Signals: {
-					"Asks": {Data: 0},
-					"Bids": {Data: 0},
-					"LastPrice": {Data: 0}
-				}
-			};
-			let flag = false;
-			for(const it of this.focus_data){
-				if(it.values.length > 0 && data.Signals !== undefined){
-					data.Signals[it.name] = {
-						Data: it.values[it.values.length - 1].data
-					};
-					flag = true;
-				}
-			}
-			if(flag){
-				this.addContext(data);
-				this.updateContextDomain();
-				this.draw();
-			}
-		}, 1000 / fps);
 	}
 	private stopTimer(): void {
 		if(this.tid){
@@ -1039,9 +1038,9 @@ class Client {
 			this.graph.setFocusXAxis(sec);
 		}
 	}
-	public setGraphFocusFPS(sec: number): void {
+	public setGraphFocusFPS(fps: number): void {
 		if(this.graph !== undefined){
-			this.graph.restartTimer(sec);
+			this.graph.restartTimer(fps);
 		}
 	}
 	private createGraph(obj: Readonly<Stream>): void {
@@ -1148,6 +1147,7 @@ const dispdata: Display = {
 		fps: {
 			selected: 10,
 			options: [
+				{text: "無し", value: 0},
 				{text: "1fps", value: 1},
 				{text: "5fps", value: 5},
 				{text: "10fps", value: 10},
@@ -1183,6 +1183,8 @@ const vm = new Vue({
 });
 let cli = new Client(location.hash);
 window.addEventListener("hashchange", () => {
+	dispdata.focus.xaxis.selected = 120;
+	dispdata.focus.fps.selected = 10;
 	if(cli != null){
 		cli.dispose();
 	}
