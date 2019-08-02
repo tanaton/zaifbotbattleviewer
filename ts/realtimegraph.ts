@@ -60,6 +60,7 @@ const PriceMax = 10_000_000;
 const PriceMin = -10_000_000;
 const summaryUpdateInterval = 10 * 1000;	// 10秒
 const focusUpdateIntervalFPS = 10;
+const focusXAxisSec = 120;
 
 type Box = {
 	readonly top: number;
@@ -534,7 +535,7 @@ class Graph {
 					}
 				};
 				let flag = false;
-				for(const it of this.focus_data){
+				for(const it of this.context_data){
 					if(it.values.length > 0 && data.Signals !== undefined){
 						data.Signals[it.name] = {
 							Data: it.values[it.values.length - 1].data
@@ -637,7 +638,7 @@ class Graph {
 	}
 	public addContext(data: Readonly<Stream>): void {
 		const date = data.Date;
-		const datestart = new Date(Date.now() - (this.focus_xaxis_sec * 1000));
+		const datestart = new Date(date.getTime() - (this.focus_xaxis_sec * 1000));
 		const l = this.focus_data.length;
 		const sigs = data.Signals;
 		for(let i = 0; i < l; i++){
@@ -692,10 +693,7 @@ class Graph {
 					dep += price[0] * price[1];
 					return {price: price[0], depth: dep};
 				});
-				this.depth_data[i].values.unshift({
-					price: it[0][0],
-					depth: 0
-				});
+				this.depth_data[i].values.unshift({price: it[0][0], depth: 0});
 				this.draw_depth = true;
 			}
 		});
@@ -1135,7 +1133,7 @@ const dispdata: Display = {
 	trades: [],
 	focus: {
 		xaxis: {
-			selected: 120,
+			selected: focusXAxisSec,
 			options: [
 				{text: "1分", value: 60},
 				{text: "2分", value: 120},
@@ -1145,7 +1143,7 @@ const dispdata: Display = {
 			]
 		},
 		fps: {
-			selected: 10,
+			selected: focusUpdateIntervalFPS,
 			options: [
 				{text: "無し", value: 0},
 				{text: "1fps", value: 1},
@@ -1183,8 +1181,8 @@ const vm = new Vue({
 });
 let cli = new Client(location.hash);
 window.addEventListener("hashchange", () => {
-	dispdata.focus.xaxis.selected = 120;
-	dispdata.focus.fps.selected = 10;
+	dispdata.focus.xaxis.selected = focusXAxisSec;
+	dispdata.focus.fps.selected = focusUpdateIntervalFPS;
 	if(cli != null){
 		cli.dispose();
 	}
