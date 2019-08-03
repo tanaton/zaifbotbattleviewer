@@ -169,7 +169,7 @@ type Stream = {
 	};
 }
 
-type ChartContextData = {
+type ChartPathData = {
 	date: Date;
 	data: number;
 }
@@ -181,7 +181,7 @@ type ChartDepthData = {
 
 type Context = {
 	readonly name: Signal;
-	values: ChartContextData[];
+	values: ChartPathData[];
 }
 
 type Depth = {
@@ -258,14 +258,14 @@ class Graph {
 	private focus_y: d3.ScaleLinear<number, number>;
 	private focus_xAxis: d3.Axis<Date>;
 	private focus_yAxis: d3.Axis<number | { valueOf(): number; }>;
-	private focus_line: d3.Line<ChartContextData>;
+	private focus_line: d3.Line<ChartPathData>;
 	private focus_path_d: (d: Context) => string | null;
 
 	private summary_x: d3.ScaleTime<number, number>;
 	private summary_y: d3.ScaleLinear<number, number>;
 	private summary_xAxis: d3.Axis<Date>;
 	private summary_yAxis: d3.Axis<number | { valueOf(): number; }>;
-	private summary_line: d3.Line<ChartContextData>;
+	private summary_line: d3.Line<ChartPathData>;
 	private summary_path_d: (d: Context) => string | null;
 
 	private depth_x: d3.ScaleLinear<number, number>;
@@ -293,7 +293,7 @@ class Graph {
 		name: "Bids",
 		values: []
 	}];
-	private ydtmp: readonly [ChartContextData, ChartContextData];
+	private ydtmp: readonly [ChartPathData, ChartPathData];
 	private datamap: {[key in Signal]?: boolean} = {};
 
 	private draw_focus: boolean = false;
@@ -333,7 +333,7 @@ class Graph {
 			.tickSizeInner(-this.focus_width)
 			.tickPadding(7)
 			.ticks(5);
-		this.focus_line = d3.line<ChartContextData>()
+		this.focus_line = d3.line<ChartPathData>()
 			//.curve(d3.curveLinear)
 			.curve(d3.curveStepAfter)
 			.x(d => this.focus_x(d.date))
@@ -354,7 +354,7 @@ class Graph {
 		this.summary_yAxis = d3.axisLeft(this.summary_y)
 			.tickSizeInner(-this.summary_width)
 			.tickPadding(7);
-		this.summary_line = d3.line<ChartContextData>()
+		this.summary_line = d3.line<ChartPathData>()
 			//.curve(d3.curveLinear)
 			.curve(d3.curveStepAfter)
 			.x(d => this.summary_x(d.date))
@@ -581,22 +581,11 @@ class Graph {
 				const summary_color = this.summary_color.domain();
 				summary_color.push(key);
 				this.summary_color.domain(summary_color);
-				const newobj = (): Context => {
-					return {
-						name: key,
-						values: [{
-							date: date,
-							data: data
-						}]
-					};
-				};
-				this.context_data.push(newobj());
-				this.focus_data.push(newobj());
-				this.summary_data.push(newobj());
-				this.focus_data_legend.push({
-					name: key,
-					last_price: 0
-				});
+				const cpd: ChartPathData = {date: date, data: data};
+				this.context_data.push({name: key, values: [cpd]});
+				this.focus_data.push({name: key, values: [cpd]});
+				this.summary_data.push({name: key, values: [cpd]});
+				this.focus_data_legend.push({name: key, last_price: 0});
 				this.datamap[key] = true;
 				ret = true;
 			}
@@ -604,15 +593,15 @@ class Graph {
 		return ret;
 	}
 	// copy on write的な戦略でメモリ管理する
-	private static appendData(data: Context, val: Readonly<ChartContextData>, realtime?: boolean): boolean {
+	private static appendData(data: Context, val: Readonly<ChartPathData>, realtime?: boolean): boolean {
 		let ret = false;
 		const dv = data.values;
-		const old = dv.length > 0 ? dv[dv.length - 1] : undefined;
+		const old: ChartPathData | undefined = dv[dv.length - 1];
 		// 点の数を減らす処理
 		if(old !== undefined){
 			if(realtime){
 				// リアルタイム性が欲しい場合
-				const oldold = dv.length > 1 ? dv[dv.length - 2] : undefined;
+				const oldold: ChartPathData | undefined = dv[dv.length - 2];
 				if((oldold !== undefined) && (oldold.data === old.data) && (old.data === val.data)){
 					// 2つ前と1つ前と今回のデータが同じ場合
 					// 1つ前のデータを今回の時間に更新
@@ -647,13 +636,13 @@ class Graph {
 			const key = fd.name;
 			if(sigs && sigs[key] !== undefined){
 				const d = sigs[key].Data;
-				const ccd: ChartContextData = {
+				const cpd: ChartPathData = {
 					date: date,
 					data: d
 				};
-				Graph.appendData(fd, ccd, true);
+				Graph.appendData(fd, cpd, true);
 				this.draw_focus = true;
-				const update = Graph.appendData(cd, ccd);
+				const update = Graph.appendData(cd, cpd);
 				this.focus_data_legend[i].last_price = d;
 				// データサイズが大きくなり過ぎないように調節
 				while(fd.values.length > 1000){
@@ -670,7 +659,7 @@ class Graph {
 					sd.values = Graph.LTTB(cd.values, 200);
 				} else if(update){
 					// summaryにも追加
-					Graph.appendData(sd, ccd);
+					Graph.appendData(sd, cpd);
 				}
 				if(sd.values.length < 3){
 					this.draw_summary = true;
@@ -700,10 +689,10 @@ class Graph {
 			}
 		});
 	}
-	public static contextMinFunc(num: number, it: ChartContextData): number {
+	public static contextMinFunc(num: number, it: ChartPathData): number {
 		return (num < it.data) ? num : it.data;
 	}
-	public static contextMaxFunc(num: number, it: ChartContextData): number {
+	public static contextMaxFunc(num: number, it: ChartPathData): number {
 		return (num > it.data) ? num : it.data;
 	}
 	public updateContextDomain(all = false): void {
@@ -855,14 +844,14 @@ class Graph {
 	}
 
 	// https://github.com/dgryski/go-lttb を参考に作成
-	public static LTTB(data: readonly ChartContextData[], threshold: number): ChartContextData[] {
+	public static LTTB(data: readonly ChartPathData[], threshold: number): ChartPathData[] {
 		if(threshold >= data.length || threshold == 0){
-			return data as ChartContextData[];	// 無し
+			return data as ChartPathData[];	// 無し
 		}
 		const abs = Math.abs;
 		const floor = Math.floor;
 		// 最初の点は残す
-		const sampled: ChartContextData[] = [data[0]];
+		const sampled: ChartPathData[] = [data[0]];
 		// Bucket size. Leave room for start and end data points
 		const every: Float = (data.length - 2) / (threshold - 2);
 		let bucketStart: number = 1;
