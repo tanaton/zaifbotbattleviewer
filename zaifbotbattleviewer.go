@@ -161,11 +161,27 @@ func main() {
 	}
 	// サーバ起動
 	wg.Add(1)
-	go srvl.ListenAndServe()
+	go func() {
+		defer wg.Done()
+		putServerError(srvl, srvl.ListenAndServe())
+	}()
 	wg.Add(1)
-	go srv.Serve(autocert.NewListener("crypto.unko.in"))
+	go func() {
+		defer wg.Done()
+		putServerError(srv, srv.Serve(autocert.NewListener("crypto.unko.in")))
+	}()
 	// シャットダウン管理
 	shutdonw(pctx, &wg, srv, srvl)
+}
+
+func putServerError(srv *http.Server, err error) {
+	if err != nil {
+		if err == http.ErrServerClosed {
+			log.Infow("サーバーがシャットダウンしました。", "error", err, "Addr", srv.Addr)
+		} else {
+			log.Warnw("サーバーが落ちました。", "error", err)
+		}
+	}
 }
 
 func shutdonw(ctx context.Context, wg *sync.WaitGroup, sl ...*http.Server) {
@@ -183,7 +199,9 @@ func shutdonw(ctx context.Context, wg *sync.WaitGroup, sl ...*http.Server) {
 			}()
 			err := srv.Shutdown(ctx)
 			if err != nil {
-				log.Infow("サーバーの終了に失敗しました。", "error", err)
+				log.Warnw("サーバーの終了に失敗しました。", "error", err)
+			} else {
+				log.Infow("サーバーの終了に成功しました。", "Addr", srv.Addr)
 			}
 		}(srv)
 	}
@@ -233,34 +251,53 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss, key string, 
 	for {
 		time.Sleep(wait)
 		log.Infow("Websoket接続", "path", wss)
-		err := func() error {
-			ccctx, cancelChild := context.WithCancel(cctx)
-			defer cancelChild()
-			con, _, err := websocket.DefaultDialer.DialContext(ccctx, wss, nil)
-			if err != nil {
-				return err
+		exit := func() bool {
+			ch := make(chan error, 1)
+			defer close(ch)
+			dialctx, dialcancel := context.WithTimeout(cctx, time.Second*7)
+			defer dialcancel()
+			con, _, dialerr := websocket.DefaultDialer.DialContext(dialctx, wss, nil)
+			if dialerr != nil {
+				// Dialが失敗した理由がよくわからない
+				// contextを伝搬してきた通知で失敗した？普通にタイムアウトした？
+				// 先の処理に丸投げ
+				ch <- dialerr
+			} else {
+				defer con.Close() // 2回呼ばれるかも
+				go func() {
+					for {
+						s := Stream{}
+						err := con.ReadJSON(&s)
+						if err != nil {
+							ch <- err
+							return
+						}
+						wsch <- StreamPacket{
+							name: key,
+							s:    s,
+						}
+					}
+				}()
 			}
-			defer con.Close()
-			for {
-				s := Stream{}
-				err = con.ReadJSON(&s)
-				if err != nil {
-					return err
+			var exit bool
+			select {
+			case <-cctx.Done():
+				// シャットダウンする場合
+				if con != nil {
+					con.Close()
 				}
-				wsch <- StreamPacket{
-					name: key,
-					s:    s,
-				}
+				<-ch
+				exit = true
+			case err := <-ch:
+				// 普通の通信異常（リトライするやつ）
+				log.Warnw("websocket通信に失敗しました。", "error", err, "url", wss, "key", key)
+				exit = false
 			}
+			return exit
 		}()
-		if IsCancel(cctx) {
-			log.Infow("streamReaderProc終了")
+		if exit {
+			log.Infow("streamReaderProc終了", "url", wss, "key", key)
 			return
-		}
-		if err != nil {
-			log.Infow("websocket通信に失敗しました。", "error", err, "url", wss, "key", key)
-		} else {
-			log.Infow("websocket通信が正常終了しました。", "url", wss, "key", key)
 		}
 		if wait < 180*time.Second {
 			wait *= 2
@@ -281,7 +318,7 @@ func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan Stream
 	for key := range zaifStremUrlList {
 		sl, err := storeReaderProc(now, key)
 		if err != nil {
-			log.Infow("ファイル読み込み失敗", "error", err)
+			log.Warnw("ファイル読み込み失敗", "error", err)
 		}
 		slm[key] = sl
 	}
@@ -330,7 +367,7 @@ func storeReaderProc(now time.Time, key string) ([]StoreData, error) {
 		sd := StoreData{}
 		err := json.Unmarshal(scanner.Bytes(), &sd)
 		if err != nil {
-			log.Infow("JSON解析失敗", "error", err, "json", scanner.Text())
+			log.Warnw("JSON解析失敗", "error", err, "json", scanner.Text())
 			continue
 		}
 		sl = append(sl, sd)
@@ -365,7 +402,7 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StoreD
 				var err error
 				si, err = NewStoreItem(old, it.name)
 				if err != nil {
-					log.Infow("JSONファイル生成に失敗しました。", "error", err, "name", it.name)
+					log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", it.name)
 					break
 				}
 				_ = si.readData()
@@ -373,7 +410,7 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StoreD
 			}
 			err := json.NewEncoder(si.w).Encode(it.sd)
 			if err != nil {
-				log.Infow("JSONファイル出力に失敗しました。", "error", err)
+				log.Warnw("JSONファイル出力に失敗しました。", "error", err)
 			}
 		case now := <-tc.C:
 			if now.Day() != old.Day() {
@@ -381,7 +418,7 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StoreD
 					it.Close()
 					err := it.reset(now, key)
 					if err != nil {
-						log.Infow("JSONファイル生成に失敗しました。", "error", err, "name", key)
+						log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", key)
 						break
 					}
 				}
@@ -503,16 +540,6 @@ func (sir *StoreItemReader) Close() error {
 	return sir.fp.Close()
 }
 
-func IsCancel(ctx context.Context) (ret bool) {
-	select {
-	case <-ctx.Done():
-		ret = true
-	default:
-		ret = false
-	}
-	return
-}
-
 func appendStore(sl []StoreData, s, olds Stream) ([]StoreData, bool) {
 	write := false
 	sd := StoreData{}
@@ -579,7 +606,7 @@ func (bbh *BBHandler) getStoreData(ctx context.Context, name string) ([]StoreDat
 	case it := <-ch:
 		// 結果の受信
 		if it.err != nil {
-			log.Infow("ストリームデータの取得に失敗しました。", "error", it.err, "name", name)
+			log.Warnw("ストリームデータの取得に失敗しました。", "error", it.err, "name", name)
 		}
 		return it.sl, nil
 	}
@@ -594,7 +621,7 @@ func (bbh *BBHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = json.NewEncoder(w).Encode(sdl)
 			if err != nil {
-				log.Infow("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
+				log.Warnw("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
 			}
 		}
 	default:
