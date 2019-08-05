@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,6 +23,10 @@ import (
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/acme/autocert"
+)
+
+const (
+	StoreDataMax = 1 << 14 // 16384
 )
 
 type PriceAmount [2]float64
@@ -128,37 +133,70 @@ func init() {
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
+	var wg sync.WaitGroup
 	reqch := make(chan Request, 8)
 	sch := make(chan StreamPacket, 32)
 	storesch := make(chan StoreDataPacket, 32)
-	pctx := startSignalProc(context.Background())
+	pctx := startSignalProc(context.Background(), &wg)
 	for key, u := range zaifStremUrlList {
-		go streamReaderProc(pctx, u, key, sch)
+		wg.Add(1)
+		go streamReaderProc(pctx, &wg, u, key, sch)
 	}
-	go streamStoreProc(pctx, sch, storesch, reqch)
-	go storeWriterProc(pctx, storesch)
+	wg.Add(1)
+	go streamStoreProc(pctx, &wg, sch, storesch, reqch)
+	wg.Add(1)
+	go storeWriterProc(pctx, &wg, storesch)
 
 	nh := BBHandler{
 		fs:    http.FileServer(http.Dir("./public_html")),
 		reqch: reqch,
 	}
 	gnh := gziphandler.MustNewGzipLevelHandler(gzip.BestSpeed)(&nh)
-	serverLocal := &http.Server{
+	srvl := &http.Server{
 		Addr:    ":8080",
 		Handler: gnh,
 	}
-	server := &http.Server{
+	srv := &http.Server{
 		Handler: gnh,
 	}
 	// サーバ起動
-	go serverLocal.ListenAndServe()
-	log.Fatal(server.Serve(autocert.NewListener("crypto.unko.in")))
+	wg.Add(1)
+	go srvl.ListenAndServe()
+	wg.Add(1)
+	go srv.Serve(autocert.NewListener("crypto.unko.in"))
+	// シャットダウン管理
+	shutdonw(pctx, &wg, srv, srvl)
 }
 
-func startSignalProc(ctx context.Context) context.Context {
+func shutdonw(ctx context.Context, wg *sync.WaitGroup, sl ...*http.Server) {
+	cctx, ccancel := context.WithCancel(ctx)
+	defer ccancel()
+	// シグナル等でサーバを中断する
+	<-cctx.Done()
+	for _, srv := range sl {
+		wg.Add(1)
+		go func(srv *http.Server) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+			defer func() {
+				cancel()
+				wg.Done()
+			}()
+			err := srv.Shutdown(ctx)
+			if err != nil {
+				log.Infow("サーバーの終了に失敗しました。", "error", err)
+			}
+		}(srv)
+	}
+	// サーバーの終了待機
+	wg.Wait()
+	log.Sync()
+	os.Exit(0)
+}
+
+func startSignalProc(ctx context.Context, wg *sync.WaitGroup) context.Context {
 	pctx, cancelParent := context.WithCancel(ctx)
+	wg.Add(1)
 	go func() {
-		defer cancelParent()
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig,
 			syscall.SIGHUP,
@@ -166,7 +204,11 @@ func startSignalProc(ctx context.Context) context.Context {
 			syscall.SIGTERM,
 			syscall.SIGQUIT,
 		)
-		defer signal.Stop(sig)
+		defer func() {
+			signal.Stop(sig)
+			cancelParent()
+			wg.Done()
+		}()
 
 		select {
 		case <-pctx.Done():
@@ -181,9 +223,12 @@ func startSignalProc(ctx context.Context) context.Context {
 	return pctx
 }
 
-func streamReaderProc(ctx context.Context, wss, key string, wsch chan<- StreamPacket) {
+func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss, key string, wsch chan<- StreamPacket) {
 	cctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	defer func() {
+		cancel()
+		wg.Done()
+	}()
 	wait := time.Duration(rand.Uint64()%5000) * time.Millisecond
 	for {
 		time.Sleep(wait)
@@ -224,9 +269,12 @@ func streamReaderProc(ctx context.Context, wss, key string, wsch chan<- StreamPa
 	}
 }
 
-func streamStoreProc(ctx context.Context, rsch <-chan StreamPacket, wsch chan<- StoreDataPacket, reqch <-chan Request) {
+func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StreamPacket, wsch chan<- StoreDataPacket, reqch <-chan Request) {
 	cctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	defer func() {
+		cancel()
+		wg.Done()
+	}()
 	slm := make(map[string][]StoreData, 8)
 	oldstream := make(map[string]Stream, 8)
 	now := time.Now()
@@ -276,7 +324,7 @@ func storeReaderProc(now time.Time, key string) ([]StoreData, error) {
 		return nil, err
 	}
 	defer sir.Close()
-	sl := []StoreData{}
+	sl := make([]StoreData, 0, StoreDataMax+1)
 	scanner := bufio.NewScanner(sir)
 	for scanner.Scan() {
 		sd := StoreData{}
@@ -286,13 +334,20 @@ func storeReaderProc(now time.Time, key string) ([]StoreData, error) {
 			continue
 		}
 		sl = append(sl, sd)
+		for len(sl) > StoreDataMax {
+			sl[0] = StoreData{}
+			sl = sl[1:]
+		}
 	}
 	return sl, nil
 }
 
-func storeWriterProc(ctx context.Context, rsch <-chan StoreDataPacket) {
+func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StoreDataPacket) {
 	cctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	defer func() {
+		cancel()
+		wg.Done()
+	}()
 	old := time.Now()
 	tc := time.NewTicker(time.Second)
 	m := make(map[string]*StoreItem, 8)
@@ -303,8 +358,6 @@ func storeWriterProc(ctx context.Context, rsch <-chan StoreDataPacket) {
 				it.Close()
 			}
 			log.Infow("storeWriterProc終了")
-			log.Sync()
-			os.Exit(1)
 			return
 		case it := <-rsch:
 			si, ok := m[it.name]
@@ -493,36 +546,56 @@ func appendStore(sl []StoreData, s, olds Stream) ([]StoreData, bool) {
 	}
 	if write {
 		sl = append(sl, sd)
-		for len(sl) > 4096 {
+		for len(sl) > StoreDataMax {
+			sl[0] = StoreData{} // どうせ使わないのでGCのためにメモリゼロ化
 			sl = sl[1:]
 		}
 	}
 	return sl, write
 }
 
-func (bbh *BBHandler) getStoreData(name string) []StoreData {
+func (bbh *BBHandler) getStoreData(ctx context.Context, name string) ([]StoreData, error) {
+	tctx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
 	ch := make(chan Result, 1)
-	bbh.reqch <- Request{
+	req := Request{
 		name: name,
 		filter: func(s []StoreData) []StoreData {
 			return s
 		},
 		wch: ch,
 	}
-	it := <-ch
-	if it.err != nil {
-		log.Infow("ストリームデータの取得に失敗しました。", "error", it.err, "name", name)
+
+	select {
+	case <-tctx.Done():
+		return nil, errors.New("timeout")
+	case bbh.reqch <- req:
+		// リクエスト送信
 	}
-	return it.sl
+
+	select {
+	case <-tctx.Done():
+		return nil, errors.New("timeout")
+	case it := <-ch:
+		// 結果の受信
+		if it.err != nil {
+			log.Infow("ストリームデータの取得に失敗しました。", "error", it.err, "name", name)
+		}
+		return it.sl, nil
+	}
 }
 
 func (bbh *BBHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	switch {
 	case strings.Index(r.URL.Path, "/api/zaif/1/oldstream/") == 0:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		err := json.NewEncoder(w).Encode(bbh.getStoreData(strings.TrimLeft(r.URL.Path, "/api/zaif/1/oldstream/")))
-		if err != nil {
-			log.Infow("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
+		sdl, err := bbh.getStoreData(ctx, strings.TrimLeft(r.URL.Path, "/api/zaif/1/oldstream/"))
+		if err == nil {
+			err = json.NewEncoder(w).Encode(sdl)
+			if err != nil {
+				log.Infow("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
+			}
 		}
 	default:
 		// その他
