@@ -134,10 +134,13 @@ func init() {
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	var wg sync.WaitGroup
+	pctx, pcancel := context.WithCancel(context.Background())
 	reqch := make(chan Request, 8)
 	sch := make(chan StreamPacket, 32)
 	storesch := make(chan StoreDataPacket, 32)
-	pctx := startSignalProc(context.Background(), &wg)
+
+	wg.Add(1)
+	go startSignalProc(pctx, &wg, pcancel)
 	for key, u := range zaifStremUrlList {
 		wg.Add(1)
 		go streamReaderProc(pctx, &wg, u, key, sch)
@@ -185,19 +188,20 @@ func putServerError(srv *http.Server, err error) {
 }
 
 func shutdonw(ctx context.Context, wg *sync.WaitGroup, sl ...*http.Server) {
-	cctx, ccancel := context.WithCancel(ctx)
-	defer ccancel()
 	// シグナル等でサーバを中断する
-	<-cctx.Done()
+	<-ctx.Done()
+	// シャットダウン処理用コンテキストの用意
+	sctx, scancel := context.WithCancel(context.Background())
+	defer scancel()
 	for _, srv := range sl {
 		wg.Add(1)
 		go func(srv *http.Server) {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+			ssctx, sscancel := context.WithTimeout(sctx, time.Second*10)
 			defer func() {
-				cancel()
+				sscancel()
 				wg.Done()
 			}()
-			err := srv.Shutdown(ctx)
+			err := srv.Shutdown(ssctx)
 			if err != nil {
 				log.Warnw("サーバーの終了に失敗しました。", "error", err)
 			} else {
@@ -211,51 +215,43 @@ func shutdonw(ctx context.Context, wg *sync.WaitGroup, sl ...*http.Server) {
 	os.Exit(0)
 }
 
-func startSignalProc(ctx context.Context, wg *sync.WaitGroup) context.Context {
-	pctx, cancelParent := context.WithCancel(ctx)
-	wg.Add(1)
-	go func() {
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig,
-			syscall.SIGHUP,
-			syscall.SIGINT,
-			syscall.SIGTERM,
-			syscall.SIGQUIT,
-		)
-		defer func() {
-			signal.Stop(sig)
-			cancelParent()
-			wg.Done()
-		}()
-
-		select {
-		case <-pctx.Done():
-			log.Infow("Cancel from parent")
-		case s := <-sig:
-			switch s {
-			case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
-				log.Infow("Signal!!", "signal", s)
-			}
-		}
+func startSignalProc(ctx context.Context, wg *sync.WaitGroup, cancel context.CancelFunc) {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig,
+		syscall.SIGHUP,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGQUIT,
+		os.Interrupt,
+		os.Kill,
+	)
+	defer func() {
+		signal.Stop(sig)
+		wg.Done()
 	}()
-	return pctx
+
+	select {
+	case <-ctx.Done():
+		log.Infow("Cancel from parent")
+	case s := <-sig:
+		log.Infow("Signal!!", "signal", s)
+		cancel()
+	}
 }
 
 func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss, key string, wsch chan<- StreamPacket) {
-	cctx, cancel := context.WithCancel(ctx)
-	defer func() {
-		cancel()
-		wg.Done()
-	}()
+	defer wg.Done()
 	wait := time.Duration(rand.Uint64()%5000) * time.Millisecond
 	for {
 		time.Sleep(wait)
 		log.Infow("Websoket接続", "path", wss)
-		exit := func() bool {
+		exit := func() (exit bool) {
 			ch := make(chan error, 1)
-			defer close(ch)
-			dialctx, dialcancel := context.WithTimeout(cctx, time.Second*7)
-			defer dialcancel()
+			dialctx, dialcancel := context.WithTimeout(ctx, time.Second*7)
+			defer func() {
+				dialcancel()
+				close(ch)
+			}()
 			con, _, dialerr := websocket.DefaultDialer.DialContext(dialctx, wss, nil)
 			if dialerr != nil {
 				// Dialが失敗した理由がよくわからない
@@ -279,9 +275,8 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss, key string, 
 					}
 				}()
 			}
-			var exit bool
 			select {
-			case <-cctx.Done():
+			case <-ctx.Done():
 				// シャットダウンする場合
 				if con != nil {
 					con.Close()
@@ -307,11 +302,7 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss, key string, 
 }
 
 func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StreamPacket, wsch chan<- StoreDataPacket, reqch <-chan Request) {
-	cctx, cancel := context.WithCancel(ctx)
-	defer func() {
-		cancel()
-		wg.Done()
-	}()
+	defer wg.Done()
 	slm := make(map[string][]StoreData, 8)
 	oldstream := make(map[string]Stream, 8)
 	now := time.Now()
@@ -324,7 +315,7 @@ func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan Stream
 	}
 	for {
 		select {
-		case <-cctx.Done():
+		case <-ctx.Done():
 			log.Infow("streamStoreProc終了")
 			return
 		case it := <-rsch:
@@ -368,7 +359,7 @@ func storeReaderProc(now time.Time, key string) ([]StoreData, error) {
 		err := json.Unmarshal(scanner.Bytes(), &sd)
 		if err != nil {
 			log.Warnw("JSON解析失敗", "error", err, "json", scanner.Text())
-			continue
+			break
 		}
 		sl = append(sl, sd)
 		for len(sl) > StoreDataMax {
@@ -380,17 +371,13 @@ func storeReaderProc(now time.Time, key string) ([]StoreData, error) {
 }
 
 func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StoreDataPacket) {
-	cctx, cancel := context.WithCancel(ctx)
-	defer func() {
-		cancel()
-		wg.Done()
-	}()
+	defer wg.Done()
 	old := time.Now()
 	tc := time.NewTicker(time.Second)
 	m := make(map[string]*StoreItem, 8)
 	for {
 		select {
-		case <-cctx.Done():
+		case <-ctx.Done():
 			for _, it := range m {
 				it.Close()
 			}
@@ -405,7 +392,10 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StoreD
 					log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", it.name)
 					break
 				}
-				_ = si.readData()
+				err = si.readData()
+				if err != nil {
+					log.Infow("JSONバックアップファイルの読み込みができませんでした。", "error", err, "name", it.name)
+				}
 				m[it.name] = si
 			}
 			err := json.NewEncoder(si.w).Encode(it.sd)
@@ -423,12 +413,6 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StoreD
 					}
 				}
 				old = now
-			}
-			if uint64(now.Unix())%30 == 0 {
-				// 定期的に保存する
-				for _, it := range m {
-					it.Flush()
-				}
 			}
 		}
 	}
