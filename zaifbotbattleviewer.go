@@ -134,21 +134,19 @@ func init() {
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	var wg sync.WaitGroup
-	pctx, pcancel := context.WithCancel(context.Background())
 	reqch := make(chan Request, 8)
 	sch := make(chan StreamPacket, 32)
 	storesch := make(chan StoreDataPacket, 32)
 
-	wg.Add(1)
-	go startSignalProc(pctx, &wg, pcancel)
+	ctx, exitch := startExitManageProc(context.Background(), &wg)
 	for key, u := range zaifStremUrlList {
 		wg.Add(1)
-		go streamReaderProc(pctx, &wg, u, key, sch)
+		go streamReaderProc(ctx, &wg, u, key, sch)
 	}
 	wg.Add(1)
-	go streamStoreProc(pctx, &wg, sch, storesch, reqch)
+	go streamStoreProc(ctx, &wg, sch, storesch, reqch)
 	wg.Add(1)
-	go storeWriterProc(pctx, &wg, storesch)
+	go storeWriterProc(ctx, &wg, storesch)
 
 	nh := BBHandler{
 		fs:    http.FileServer(http.Dir("./public_html")),
@@ -166,23 +164,25 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		putServerError(srvl, srvl.ListenAndServe())
+		putServerError(srvl, exitch, srvl.ListenAndServe())
 	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		putServerError(srv, srv.Serve(autocert.NewListener("crypto.unko.in")))
+		putServerError(srv, exitch, srv.Serve(autocert.NewListener("crypto.unko.in")))
 	}()
 	// シャットダウン管理
-	shutdonw(pctx, &wg, srv, srvl)
+	shutdonw(ctx, &wg, srv, srvl)
 }
 
-func putServerError(srv *http.Server, err error) {
+func putServerError(srv *http.Server, exitch chan<- struct{}, err error) {
 	if err != nil {
 		if err == http.ErrServerClosed {
 			log.Infow("サーバーがシャットダウンしました。", "error", err, "Addr", srv.Addr)
 		} else {
 			log.Warnw("サーバーが落ちました。", "error", err)
+			// 終了処理
+			exitch <- struct{}{}
 		}
 	}
 }
@@ -215,28 +215,36 @@ func shutdonw(ctx context.Context, wg *sync.WaitGroup, sl ...*http.Server) {
 	os.Exit(0)
 }
 
-func startSignalProc(ctx context.Context, wg *sync.WaitGroup, cancel context.CancelFunc) {
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig,
-		syscall.SIGHUP,
-		syscall.SIGINT,
-		syscall.SIGTERM,
-		syscall.SIGQUIT,
-		os.Interrupt,
-		os.Kill,
-	)
-	defer func() {
-		signal.Stop(sig)
-		wg.Done()
-	}()
+func startExitManageProc(ctx context.Context, wg *sync.WaitGroup) (context.Context, chan<- struct{}) {
+	exitch := make(chan struct{}, 1)
+	ectx, cancel := context.WithCancel(ctx)
+	wg.Add(1)
+	go func(ch <-chan struct{}) {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig,
+			syscall.SIGHUP,
+			syscall.SIGINT,
+			syscall.SIGTERM,
+			syscall.SIGQUIT,
+			os.Interrupt,
+			os.Kill,
+		)
+		defer func() {
+			signal.Stop(sig)
+			cancel()
+			wg.Done()
+		}()
 
-	select {
-	case <-ctx.Done():
-		log.Infow("Cancel from parent")
-	case s := <-sig:
-		log.Infow("Signal!!", "signal", s)
-		cancel()
-	}
+		select {
+		case <-ectx.Done():
+			log.Infow("Cancel from parent")
+		case s := <-sig:
+			log.Infow("Signal!!", "signal", s)
+		case <-ch:
+			log.Infow("Exit command!!")
+		}
+	}(exitch)
+	return ectx, exitch
 }
 
 func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss, key string, wsch chan<- StreamPacket) {
