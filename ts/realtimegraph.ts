@@ -966,15 +966,17 @@ class Client {
 		this.updateView(obj);
 	}
 	private updateView(obj: Readonly<ZaifStream>): void {
-		const cp: readonly string[] = this.currency_pair.split("_");
 		for(const key in dispdata.currencys){
 			if(isCurrencyPair(key) && dispdata.currencys.hasOwnProperty(key)){
 				dispdata.currencys[key].active = "";
 			}
 		}
 		dispdata.currencys[this.currency_pair].active = "active";
-		dispdata.currency_pair.first = cp[0];
-		dispdata.currency_pair.second = cp[1];
+		{
+			const cp: readonly string[] = this.currency_pair.split("_");
+			dispdata.currency_pair.first = cp[0];
+			dispdata.currency_pair.second = cp[1];
+		}
 		dispdata.last_trade.price = obj.last_price.price.toLocaleString();
 		dispdata.last_trade.action = Client.getDirection(obj.last_price.action);
 		dispdata.last_trade.type = obj.last_price.action;

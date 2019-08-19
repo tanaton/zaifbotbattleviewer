@@ -114,6 +114,11 @@ type Output struct {
 	ZFlag  bool
 }
 
+type Srv struct {
+	s *http.Server
+	f func(s *http.Server) error
+}
+
 var zaifStremUrlList = map[string]string{
 	"btc_jpy":  "wss://ws.zaif.jp/stream?currency_pair=btc_jpy",
 	"xem_jpy":  "wss://ws.zaif.jp/stream?currency_pair=xem_jpy",
@@ -153,32 +158,42 @@ func main() {
 		reqch: reqch,
 	}
 	gnh := gziphandler.MustNewGzipLevelHandler(gzip.BestSpeed)(&nh)
-	srvl := &http.Server{
-		Addr:    ":8080",
-		Handler: gnh,
+	// サーバ情報
+	sl := []Srv{
+		Srv{
+			s: &http.Server{
+				Addr:    ":8080",
+				Handler: gnh,
+			},
+			f: func(s *http.Server) error {
+				return s.ListenAndServe()
+			},
+		},
+		Srv{
+			s: &http.Server{
+				Handler: gnh,
+			},
+			f: func(s *http.Server) error {
+				return s.Serve(autocert.NewListener("crypto.unko.in"))
+			},
+		},
 	}
-	srv := &http.Server{
-		Handler: gnh,
+	for _, s := range sl {
+		wg.Add(1)
+		go s.startServer(ctx, &wg, exitch)
 	}
-	// サーバ起動
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		putServerError(srvl, exitch, srvl.ListenAndServe())
-	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		putServerError(srv, exitch, srv.Serve(autocert.NewListener("crypto.unko.in")))
-	}()
 	// シャットダウン管理
-	shutdonw(ctx, &wg, srv, srvl)
+	shutdonw(ctx, &wg, sl...)
 }
 
-func putServerError(srv *http.Server, exitch chan<- struct{}, err error) {
+func (srv *Srv) startServer(ctx context.Context, wg *sync.WaitGroup, exitch chan<- struct{}) {
+	defer wg.Done()
+	// サーバ起動
+	err := srv.f(srv.s)
+	// サーバが終了した場合
 	if err != nil {
 		if err == http.ErrServerClosed {
-			log.Infow("サーバーがシャットダウンしました。", "error", err, "Addr", srv.Addr)
+			log.Infow("サーバーがシャットダウンしました。", "error", err, "Addr", srv.s.Addr)
 		} else {
 			log.Warnw("サーバーが落ちました。", "error", err)
 			// 終了処理
@@ -187,7 +202,7 @@ func putServerError(srv *http.Server, exitch chan<- struct{}, err error) {
 	}
 }
 
-func shutdonw(ctx context.Context, wg *sync.WaitGroup, sl ...*http.Server) {
+func shutdonw(ctx context.Context, wg *sync.WaitGroup, sl ...Srv) {
 	// シグナル等でサーバを中断する
 	<-ctx.Done()
 	// シャットダウン処理用コンテキストの用意
@@ -207,7 +222,7 @@ func shutdonw(ctx context.Context, wg *sync.WaitGroup, sl ...*http.Server) {
 			} else {
 				log.Infow("サーバーの終了に成功しました。", "Addr", srv.Addr)
 			}
-		}(srv)
+		}(srv.s)
 	}
 	// サーバーの終了待機
 	wg.Wait()
