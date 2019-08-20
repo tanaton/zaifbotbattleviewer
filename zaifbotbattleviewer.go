@@ -79,10 +79,6 @@ type StoreData struct {
 	Trade     *Trade       `json:"trade,omitempty"`
 	Timestamp Unixtime     `json:"ts"`
 }
-type BBHandler struct {
-	fs    http.Handler
-	reqch chan<- Request
-}
 type StreamPacket struct {
 	name string
 	s    Stream
@@ -113,12 +109,37 @@ type Output struct {
 	Reader io.Reader
 	ZFlag  bool
 }
-
 type Srv struct {
 	s *http.Server
 	f func(s *http.Server) error
 }
+type ResultMonitor struct {
+	err                 error
+	ResponseTimeSum     time.Duration
+	ResponseCount       uint
+	ResponseCodeOkCount uint
+	ResponseCodeNgCount uint
+}
+type RequestMonitor struct {
+	wch chan<- ResultMonitor
+}
+type BBHandler struct {
+	fs     http.Handler
+	reqch  chan<- Request
+	monich chan<- RequestMonitor
+}
+type MonitoringHandler struct {
+	bbh  *BBHandler
+	rich chan<- ResponseInfo
+}
 
+var gzipContentTypeList = []string{
+	"text/html",
+	"text/css",
+	"text/javascript",
+	"text/plain",
+	"application/json",
+}
 var zaifStremUrlList = map[string]string{
 	"btc_jpy":  "wss://ws.zaif.jp/stream?currency_pair=btc_jpy",
 	"xem_jpy":  "wss://ws.zaif.jp/stream?currency_pair=xem_jpy",
@@ -153,40 +174,81 @@ func main() {
 	wg.Add(1)
 	go storeWriterProc(ctx, &wg, storesch)
 
-	nh := BBHandler{
-		fs:    http.FileServer(http.Dir("./public_html")),
-		reqch: reqch,
+	hfunc, err := gziphandler.GzipHandlerWithOpts(gziphandler.CompressionLevel(gzip.BestSpeed), gziphandler.ContentTypes(gzipContentTypeList))
+	if err != nil {
+		panic(err)
 	}
-	gnh := gziphandler.MustNewGzipLevelHandler(gzip.BestSpeed)(&nh)
+	gh := hfunc(NewMonitoringHandler(ctx, &wg, reqch))
 	// サーバ情報
 	sl := []Srv{
 		Srv{
-			s: &http.Server{
-				Addr:    ":8080",
-				Handler: gnh,
-			},
-			f: func(s *http.Server) error {
-				return s.ListenAndServe()
-			},
+			s: &http.Server{Addr: ":8080", Handler: gh},
+			f: func(s *http.Server) error { return s.ListenAndServe() },
 		},
 		Srv{
-			s: &http.Server{
-				Handler: gnh,
-			},
-			f: func(s *http.Server) error {
-				return s.Serve(autocert.NewListener("crypto.unko.in"))
-			},
+			s: &http.Server{Handler: gh},
+			f: func(s *http.Server) error { return s.Serve(autocert.NewListener("crypto.unko.in")) },
 		},
 	}
 	for _, s := range sl {
 		wg.Add(1)
-		go s.startServer(ctx, &wg, exitch)
+		go s.startServer(&wg, exitch)
 	}
 	// シャットダウン管理
 	shutdonw(ctx, &wg, sl...)
 }
 
-func (srv *Srv) startServer(ctx context.Context, wg *sync.WaitGroup, exitch chan<- struct{}) {
+func NewMonitoringHandler(ctx context.Context, wg *sync.WaitGroup, reqch chan<- Request) *MonitoringHandler {
+	rich := make(chan ResponseInfo, 32)
+	monich := make(chan RequestMonitor, 8)
+	bbh := &BBHandler{
+		fs:     http.FileServer(http.Dir("./public_html")),
+		reqch:  reqch,
+		monich: monich,
+	}
+	mh := &MonitoringHandler{
+		bbh:  bbh,
+		rich: rich,
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		res := ResultMonitor{}
+		resmin := ResultMonitor{}
+		tc := time.NewTicker(time.Minute)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ri := <-rich:
+				res.ResponseCount++
+				res.ResponseTimeSum += ri.start.Sub(ri.end)
+				if ri.code < 400 {
+					res.ResponseCodeOkCount++
+				} else {
+					res.ResponseCodeNgCount++
+				}
+			case m := <-monich:
+				m.wch <- resmin
+			case <-tc.C:
+				if res.ResponseCount > 0 {
+					resmin = res
+				} else {
+					resmin = ResultMonitor{}
+				}
+				res = ResultMonitor{}
+			}
+		}
+	}()
+	return mh
+}
+func (mh *MonitoringHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	bbrw := NewBBRW(w, mh.rich)
+	mh.bbh.ServeHTTP(bbrw, r)
+	bbrw.Finish()
+}
+
+func (srv *Srv) startServer(wg *sync.WaitGroup, exitch chan<- struct{}) {
 	defer wg.Done()
 	// サーバ起動
 	err := srv.f(srv.s)
@@ -547,6 +609,41 @@ func (sir *StoreItemReader) Close() error {
 	return sir.fp.Close()
 }
 
+type ResponseInfo struct {
+	code  int
+	start time.Time
+	end   time.Time
+}
+type BBResponseWriter struct {
+	w    http.ResponseWriter
+	ri   ResponseInfo
+	rich chan<- ResponseInfo
+}
+
+func NewBBRW(w http.ResponseWriter, rich chan<- ResponseInfo) *BBResponseWriter {
+	return &BBResponseWriter{
+		w: w,
+		ri: ResponseInfo{
+			start: time.Now(),
+		},
+		rich: rich,
+	}
+}
+func (bbrw *BBResponseWriter) Header() http.Header {
+	return bbrw.w.Header()
+}
+func (bbrw *BBResponseWriter) Write(buf []byte) (int, error) {
+	return bbrw.w.Write(buf)
+}
+func (bbrw *BBResponseWriter) WriteHeader(statusCode int) {
+	bbrw.ri.code = statusCode
+	bbrw.w.WriteHeader(statusCode)
+}
+func (bbrw *BBResponseWriter) Finish() {
+	bbrw.ri.end = time.Now()
+	bbrw.rich <- bbrw.ri
+}
+
 func appendStore(sl []StoreData, s, olds Stream) ([]StoreData, bool) {
 	write := false
 	sd := StoreData{}
@@ -621,15 +718,27 @@ func (bbh *BBHandler) getStoreData(ctx context.Context, name string) ([]StoreDat
 
 func (bbh *BBHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	p := r.URL.Path
 	switch {
-	case strings.Index(r.URL.Path, "/api/zaif/1/oldstream/") == 0:
+	case strings.Index(p, "/api/zaif/1/oldstream/") == 0:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		sdl, err := bbh.getStoreData(ctx, strings.TrimLeft(r.URL.Path, "/api/zaif/1/oldstream/"))
+		sdl, err := bbh.getStoreData(ctx, strings.TrimLeft(p, "/api/zaif/1/oldstream/"))
 		if err == nil {
 			err = json.NewEncoder(w).Encode(sdl)
 			if err != nil {
-				log.Warnw("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
+				log.Warnw("JSON出力に失敗しました。", "error", err, "path", p)
 			}
+		}
+	case p == "/api/unko.in/1/server":
+		resch := make(chan ResultMonitor, 1)
+		bbh.monich <- RequestMonitor{
+			wch: resch,
+		}
+		res, ok := <-resch
+		if ok {
+
+		} else {
+			log.Warnw("モニタリングデータ取得に失敗しました。", "error", res.err, "path", p)
 		}
 	default:
 		// その他
