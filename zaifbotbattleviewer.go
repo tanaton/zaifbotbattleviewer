@@ -166,6 +166,9 @@ func main() {
 
 	ctx, exitch := startExitManageProc(context.Background(), &wg)
 	for key, u := range zaifStremUrlList {
+		// ローカル化
+		key := key
+		u := u
 		wg.Add(1)
 		go streamReaderProc(ctx, &wg, u, key, sch)
 	}
@@ -176,7 +179,9 @@ func main() {
 
 	hfunc, err := gziphandler.GzipHandlerWithOpts(gziphandler.CompressionLevel(gzip.BestSpeed), gziphandler.ContentTypes(gzipContentTypeList))
 	if err != nil {
-		panic(err)
+		exitch <- struct{}{}
+		log.Infow("サーバーハンドラの作成に失敗しました。", "error", err)
+		shutdown(ctx, &wg)
 	}
 	gh := hfunc(NewMonitoringHandler(ctx, &wg, reqch))
 	// サーバ情報
@@ -191,13 +196,15 @@ func main() {
 		},
 	}
 	for _, s := range sl {
+		s := s // ローカル化
 		wg.Add(1)
-		go s.startServer(&wg, exitch)
+		go s.startServer(&wg)
 	}
 	// シャットダウン管理
-	shutdonw(ctx, &wg, sl...)
+	shutdown(ctx, &wg, sl...)
 }
 
+// モニタリング用ハンドラ生成
 func NewMonitoringHandler(ctx context.Context, wg *sync.WaitGroup, reqch chan<- Request) *MonitoringHandler {
 	rich := make(chan ResponseInfo, 32)
 	monich := make(chan RequestMonitor, 8)
@@ -219,10 +226,11 @@ func NewMonitoringHandler(ctx context.Context, wg *sync.WaitGroup, reqch chan<- 
 		for {
 			select {
 			case <-ctx.Done():
+				log.Infow("NewMonitoringHandler終了")
 				return
 			case ri := <-rich:
 				res.ResponseCount++
-				res.ResponseTimeSum += ri.start.Sub(ri.end)
+				res.ResponseTimeSum += ri.end.Sub(ri.start)
 				if ri.code < 400 {
 					res.ResponseCodeOkCount++
 				} else {
@@ -248,8 +256,9 @@ func (mh *MonitoringHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	bbrw.Finish()
 }
 
-func (srv *Srv) startServer(wg *sync.WaitGroup, exitch chan<- struct{}) {
+func (srv *Srv) startServer(wg *sync.WaitGroup) {
 	defer wg.Done()
+	log.Infow("Srv.startServer", "Addr", srv.s.Addr)
 	// サーバ起動
 	err := srv.f(srv.s)
 	// サーバが終了した場合
@@ -258,13 +267,11 @@ func (srv *Srv) startServer(wg *sync.WaitGroup, exitch chan<- struct{}) {
 			log.Infow("サーバーがシャットダウンしました。", "error", err, "Addr", srv.s.Addr)
 		} else {
 			log.Warnw("サーバーが落ちました。", "error", err)
-			// 終了処理
-			exitch <- struct{}{}
 		}
 	}
 }
 
-func shutdonw(ctx context.Context, wg *sync.WaitGroup, sl ...Srv) {
+func shutdown(ctx context.Context, wg *sync.WaitGroup, sl ...Srv) {
 	// シグナル等でサーバを中断する
 	<-ctx.Done()
 	// シャットダウン処理用コンテキストの用意
@@ -729,16 +736,17 @@ func (bbh *BBHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				log.Warnw("JSON出力に失敗しました。", "error", err, "path", p)
 			}
 		}
-	case p == "/api/unko.in/1/server":
+	case p == "/api/unko.in/1/monitor":
 		resch := make(chan ResultMonitor, 1)
 		bbh.monich <- RequestMonitor{
 			wch: resch,
 		}
-		res, ok := <-resch
-		if ok {
-
-		} else {
-			log.Warnw("モニタリングデータ取得に失敗しました。", "error", res.err, "path", p)
+		res := <-resch
+		close(resch)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		err := json.NewEncoder(w).Encode(res)
+		if err != nil {
+			log.Warnw("JSON出力に失敗しました。", "error", err, "path", p)
 		}
 	default:
 		// その他
