@@ -128,10 +128,6 @@ type BBHandler struct {
 	reqch  chan<- Request
 	monich chan<- RequestMonitor
 }
-type MonitoringHandler struct {
-	bbh  *BBHandler
-	rich chan<- ResponseInfo
-}
 
 var gzipContentTypeList = []string{
 	"text/html",
@@ -155,12 +151,14 @@ func init() {
 		panic(err)
 	}
 	log = logger.Sugar()
+	rand.Seed(time.Now().UnixNano())
 }
 
 func main() {
-	rand.Seed(time.Now().UnixNano())
 	var wg sync.WaitGroup
 	reqch := make(chan Request, 8)
+	monich := make(chan RequestMonitor, 8)
+	rich := make(chan ResponseInfo, 32)
 	sch := make(chan StreamPacket, 32)
 	storesch := make(chan StoreDataPacket, 32)
 
@@ -176,22 +174,29 @@ func main() {
 	go streamStoreProc(ctx, &wg, sch, storesch, reqch)
 	wg.Add(1)
 	go storeWriterProc(ctx, &wg, storesch)
+	wg.Add(1)
+	go serverMonitoringProc(ctx, &wg, rich, monich)
 
-	hfunc, err := gziphandler.GzipHandlerWithOpts(gziphandler.CompressionLevel(gzip.BestSpeed), gziphandler.ContentTypes(gzipContentTypeList))
+	bbh := &BBHandler{
+		fs:     http.FileServer(http.Dir("./public_html")),
+		reqch:  reqch,
+		monich: monich,
+	}
+	ghfunc, err := gziphandler.GzipHandlerWithOpts(gziphandler.CompressionLevel(gzip.BestSpeed), gziphandler.ContentTypes(gzipContentTypeList))
 	if err != nil {
 		exitch <- struct{}{}
 		log.Infow("サーバーハンドラの作成に失敗しました。", "error", err)
 		shutdown(ctx, &wg)
 	}
-	gh := hfunc(NewMonitoringHandler(ctx, &wg, reqch))
+	h := MonitoringHandler(ghfunc(bbh), rich)
 	// サーバ情報
 	sl := []Srv{
 		Srv{
-			s: &http.Server{Addr: ":8080", Handler: gh},
+			s: &http.Server{Addr: ":8080", Handler: h},
 			f: func(s *http.Server) error { return s.ListenAndServe() },
 		},
 		Srv{
-			s: &http.Server{Handler: gh},
+			s: &http.Server{Handler: h},
 			f: func(s *http.Server) error { return s.Serve(autocert.NewListener("crypto.unko.in")) },
 		},
 	}
@@ -204,56 +209,13 @@ func main() {
 	shutdown(ctx, &wg, sl...)
 }
 
-// モニタリング用ハンドラ生成
-func NewMonitoringHandler(ctx context.Context, wg *sync.WaitGroup, reqch chan<- Request) *MonitoringHandler {
-	rich := make(chan ResponseInfo, 32)
-	monich := make(chan RequestMonitor, 8)
-	bbh := &BBHandler{
-		fs:     http.FileServer(http.Dir("./public_html")),
-		reqch:  reqch,
-		monich: monich,
-	}
-	mh := &MonitoringHandler{
-		bbh:  bbh,
-		rich: rich,
-	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		res := ResultMonitor{}
-		resmin := ResultMonitor{}
-		tc := time.NewTicker(time.Minute)
-		for {
-			select {
-			case <-ctx.Done():
-				log.Infow("NewMonitoringHandler終了")
-				return
-			case ri := <-rich:
-				res.ResponseCount++
-				res.ResponseTimeSum += ri.end.Sub(ri.start)
-				if ri.code < 400 {
-					res.ResponseCodeOkCount++
-				} else {
-					res.ResponseCodeNgCount++
-				}
-			case m := <-monich:
-				m.wch <- resmin
-			case <-tc.C:
-				if res.ResponseCount > 0 {
-					resmin = res
-				} else {
-					resmin = ResultMonitor{}
-				}
-				res = ResultMonitor{}
-			}
-		}
-	}()
-	return mh
-}
-func (mh *MonitoringHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	bbrw := NewBBRW(w, mh.rich)
-	mh.bbh.ServeHTTP(bbrw, r)
-	bbrw.Finish()
+// MonitoringHandler モニタリング用ハンドラ生成
+func MonitoringHandler(h http.Handler, rich chan<- ResponseInfo) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bbrw := NewBBRW(w, rich)
+		h.ServeHTTP(bbrw, r)
+		bbrw.Finish()
+	})
 }
 
 func (srv *Srv) startServer(wg *sync.WaitGroup) {
@@ -473,6 +435,7 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StoreD
 			for _, it := range m {
 				it.Close()
 			}
+			tc.Stop()
 			log.Infow("storeWriterProc終了")
 			return
 		case it := <-rsch:
@@ -506,6 +469,39 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StoreD
 				}
 				old = now
 			}
+		}
+	}
+}
+
+// サーバお手軽監視用
+func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan ResponseInfo, monich <-chan RequestMonitor) {
+	defer wg.Done()
+	res := ResultMonitor{}
+	resmin := ResultMonitor{}
+	tc := time.NewTicker(time.Minute)
+	for {
+		select {
+		case <-ctx.Done():
+			log.Infow("serverMonitoringProc終了")
+			tc.Stop()
+			return
+		case ri := <-rich:
+			res.ResponseCount++
+			res.ResponseTimeSum += ri.end.Sub(ri.start)
+			if ri.code < 400 {
+				res.ResponseCodeOkCount++
+			} else {
+				res.ResponseCodeNgCount++
+			}
+		case m := <-monich:
+			m.wch <- resmin
+		case <-tc.C:
+			if res.ResponseCount > 0 {
+				resmin = res
+			} else {
+				resmin = ResultMonitor{}
+			}
+			res = ResultMonitor{}
 		}
 	}
 }
@@ -618,6 +614,7 @@ func (sir *StoreItemReader) Close() error {
 
 type ResponseInfo struct {
 	code  int
+	size  int
 	start time.Time
 	end   time.Time
 }
@@ -640,6 +637,7 @@ func (bbrw *BBResponseWriter) Header() http.Header {
 	return bbrw.w.Header()
 }
 func (bbrw *BBResponseWriter) Write(buf []byte) (int, error) {
+	bbrw.ri.size += len(buf)
 	return bbrw.w.Write(buf)
 }
 func (bbrw *BBResponseWriter) WriteHeader(statusCode int) {
