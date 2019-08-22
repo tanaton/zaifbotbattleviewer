@@ -12,9 +12,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -123,9 +123,10 @@ type ResultMonitor struct {
 type RequestMonitor struct {
 	wch chan<- ResultMonitor
 }
-type BBHandler struct {
-	fs     http.Handler
-	reqch  chan<- Request
+type OldStreamHandler struct {
+	reqch chan<- Request
+}
+type MonitoringHandler struct {
 	monich chan<- RequestMonitor
 }
 
@@ -177,18 +178,18 @@ func main() {
 	wg.Add(1)
 	go serverMonitoringProc(ctx, &wg, rich, monich)
 
-	bbh := &BBHandler{
-		fs:     http.FileServer(http.Dir("./public_html")),
-		reqch:  reqch,
-		monich: monich,
-	}
+	// URL設定
+	http.Handle("/api/zaif/1/oldstream/", &OldStreamHandler{reqch: reqch})
+	http.Handle("/api/unko.in/1/monitor", &MonitoringHandler{monich: monich})
+	http.Handle("/", http.FileServer(http.Dir("./public_html")))
+
 	ghfunc, err := gziphandler.GzipHandlerWithOpts(gziphandler.CompressionLevel(gzip.BestSpeed), gziphandler.ContentTypes(gzipContentTypeList))
 	if err != nil {
 		exitch <- struct{}{}
 		log.Infow("サーバーハンドラの作成に失敗しました。", "error", err)
 		shutdown(ctx, &wg)
 	}
-	h := MonitoringHandler(ghfunc(bbh), rich)
+	h := Monitoring(ghfunc(http.DefaultServeMux), rich)
 	// サーバ情報
 	sl := []Srv{
 		Srv{
@@ -209,10 +210,10 @@ func main() {
 	shutdown(ctx, &wg, sl...)
 }
 
-// MonitoringHandler モニタリング用ハンドラ生成
-func MonitoringHandler(h http.Handler, rich chan<- ResponseInfo) http.Handler {
+// Monitoring モニタリング用ハンドラ生成
+func Monitoring(h http.Handler, rich chan<- ResponseInfo) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		bbrw := NewBBRW(w, rich)
+		bbrw := NewMonitoringResponseWriter(w, r, rich)
 		h.ServeHTTP(bbrw, r)
 		bbrw.Finish()
 	})
@@ -613,38 +614,43 @@ func (sir *StoreItemReader) Close() error {
 }
 
 type ResponseInfo struct {
-	code  int
-	size  int
-	start time.Time
-	end   time.Time
+	path      string
+	userAgent string
+	code      int
+	size      int
+	start     time.Time
+	end       time.Time
 }
-type BBResponseWriter struct {
+type MonitoringResponseWriter struct {
 	w    http.ResponseWriter
 	ri   ResponseInfo
 	rich chan<- ResponseInfo
 }
 
-func NewBBRW(w http.ResponseWriter, rich chan<- ResponseInfo) *BBResponseWriter {
-	return &BBResponseWriter{
+func NewMonitoringResponseWriter(w http.ResponseWriter, r *http.Request, rich chan<- ResponseInfo) *MonitoringResponseWriter {
+	return &MonitoringResponseWriter{
 		w: w,
 		ri: ResponseInfo{
-			start: time.Now(),
+			path:      r.URL.Path,
+			userAgent: r.UserAgent(),
+			start:     time.Now(),
 		},
 		rich: rich,
 	}
 }
-func (bbrw *BBResponseWriter) Header() http.Header {
+func (bbrw *MonitoringResponseWriter) Header() http.Header {
 	return bbrw.w.Header()
 }
-func (bbrw *BBResponseWriter) Write(buf []byte) (int, error) {
-	bbrw.ri.size += len(buf)
-	return bbrw.w.Write(buf)
+func (bbrw *MonitoringResponseWriter) Write(buf []byte) (int, error) {
+	s, err := bbrw.w.Write(buf)
+	bbrw.ri.size += s
+	return s, err
 }
-func (bbrw *BBResponseWriter) WriteHeader(statusCode int) {
+func (bbrw *MonitoringResponseWriter) WriteHeader(statusCode int) {
 	bbrw.ri.code = statusCode
 	bbrw.w.WriteHeader(statusCode)
 }
-func (bbrw *BBResponseWriter) Finish() {
+func (bbrw *MonitoringResponseWriter) Finish() {
 	bbrw.ri.end = time.Now()
 	bbrw.rich <- bbrw.ri
 }
@@ -690,7 +696,7 @@ func appendStore(sl []StoreData, s, olds Stream) ([]StoreData, bool) {
 	return sl, write
 }
 
-func (bbh *BBHandler) getStoreData(ctx context.Context, name string) ([]StoreData, error) {
+func (h *OldStreamHandler) getStoreData(ctx context.Context, name string) ([]StoreData, error) {
 	tctx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 	ch := make(chan Result, 1)
@@ -705,7 +711,7 @@ func (bbh *BBHandler) getStoreData(ctx context.Context, name string) ([]StoreDat
 	select {
 	case <-tctx.Done():
 		return nil, errors.New("timeout")
-	case bbh.reqch <- req:
+	case h.reqch <- req:
 		// リクエスト送信
 	}
 
@@ -721,33 +727,51 @@ func (bbh *BBHandler) getStoreData(ctx context.Context, name string) ([]StoreDat
 	}
 }
 
-func (bbh *BBHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+func (h *OldStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
-	switch {
-	case strings.Index(p, "/api/zaif/1/oldstream/") == 0:
+	_, file := path.Split(p)
+	sdl, err := h.getStoreData(r.Context(), file)
+	if err == nil {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		sdl, err := bbh.getStoreData(ctx, strings.TrimLeft(p, "/api/zaif/1/oldstream/"))
-		if err == nil {
-			err = json.NewEncoder(w).Encode(sdl)
-			if err != nil {
-				log.Warnw("JSON出力に失敗しました。", "error", err, "path", p)
-			}
-		}
-	case p == "/api/unko.in/1/monitor":
-		resch := make(chan ResultMonitor, 1)
-		bbh.monich <- RequestMonitor{
-			wch: resch,
-		}
-		res := <-resch
-		close(resch)
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		err := json.NewEncoder(w).Encode(res)
+		err = json.NewEncoder(w).Encode(sdl)
 		if err != nil {
 			log.Warnw("JSON出力に失敗しました。", "error", err, "path", p)
 		}
-	default:
-		// その他
-		bbh.fs.ServeHTTP(w, r)
+	} else {
+		http.NotFound(w, r)
+	}
+}
+
+func (h *MonitoringHandler) getResultMonitor(ctx context.Context) (ResultMonitor, error) {
+	var res ResultMonitor
+	resch := make(chan ResultMonitor, 1)
+	cctx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer func() {
+		cancel()
+		close(resch)
+	}()
+	select {
+	case <-cctx.Done():
+		return res, errors.New("timeout")
+	case h.monich <- RequestMonitor{wch: resch}:
+	}
+	select {
+	case <-cctx.Done():
+		return res, errors.New("timeout")
+	case res = <-resch:
+	}
+	return res, nil
+}
+
+func (h *MonitoringHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	res, err := h.getResultMonitor(r.Context())
+	if err == nil {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		err := json.NewEncoder(w).Encode(res)
+		if err != nil {
+			log.Warnw("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
+		}
+	} else {
+		http.Error(w, "データ取得に失敗しました。", http.StatusInternalServerError)
 	}
 }
