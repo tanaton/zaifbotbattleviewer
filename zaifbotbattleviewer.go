@@ -126,7 +126,7 @@ type RequestMonitor struct {
 type OldStreamHandler struct {
 	reqch chan<- Request
 }
-type MonitoringHandler struct {
+type GetMonitoringHandler struct {
 	monich chan<- RequestMonitor
 }
 
@@ -180,7 +180,7 @@ func main() {
 
 	// URL設定
 	http.Handle("/api/zaif/1/oldstream/", &OldStreamHandler{reqch: reqch})
-	http.Handle("/api/unko.in/1/monitor", &MonitoringHandler{monich: monich})
+	http.Handle("/api/unko.in/1/monitor", &GetMonitoringHandler{monich: monich})
 	http.Handle("/", http.FileServer(http.Dir("./public_html")))
 
 	ghfunc, err := gziphandler.GzipHandlerWithOpts(gziphandler.CompressionLevel(gzip.BestSpeed), gziphandler.ContentTypes(gzipContentTypeList))
@@ -189,7 +189,7 @@ func main() {
 		log.Infow("サーバーハンドラの作成に失敗しました。", "error", err)
 		shutdown(ctx, &wg)
 	}
-	h := Monitoring(ghfunc(http.DefaultServeMux), rich)
+	h := MonitoringHandler(ghfunc(http.DefaultServeMux), rich)
 	// サーバ情報
 	sl := []Srv{
 		Srv{
@@ -210,8 +210,8 @@ func main() {
 	shutdown(ctx, &wg, sl...)
 }
 
-// Monitoring モニタリング用ハンドラ生成
-func Monitoring(h http.Handler, rich chan<- ResponseInfo) http.Handler {
+// MonitoringHandler モニタリング用ハンドラ生成
+func MonitoringHandler(h http.Handler, rich chan<- ResponseInfo) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		bbrw := NewMonitoringResponseWriter(w, r, rich)
 		h.ServeHTTP(bbrw, r)
@@ -697,9 +697,12 @@ func appendStore(sl []StoreData, s, olds Stream) ([]StoreData, bool) {
 }
 
 func (h *OldStreamHandler) getStoreData(ctx context.Context, name string) ([]StoreData, error) {
-	tctx, cancel := context.WithTimeout(ctx, time.Second*5)
-	defer cancel()
 	ch := make(chan Result, 1)
+	tctx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer func() {
+		cancel()
+		close(ch)
+	}()
 	req := Request{
 		name: name,
 		filter: func(s []StoreData) []StoreData {
@@ -715,16 +718,17 @@ func (h *OldStreamHandler) getStoreData(ctx context.Context, name string) ([]Sto
 		// リクエスト送信
 	}
 
+	var it Result
 	select {
 	case <-tctx.Done():
 		return nil, errors.New("timeout")
-	case it := <-ch:
+	case it = <-ch:
 		// 結果の受信
-		if it.err != nil {
-			log.Warnw("ストリームデータの取得に失敗しました。", "error", it.err, "name", name)
-		}
-		return it.sl, nil
 	}
+	if it.err != nil {
+		log.Warnw("ストリームデータの取得に失敗しました。", "error", it.err, "name", name)
+	}
+	return it.sl, nil
 }
 
 func (h *OldStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -742,7 +746,7 @@ func (h *OldStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *MonitoringHandler) getResultMonitor(ctx context.Context) (ResultMonitor, error) {
+func (h *GetMonitoringHandler) getResultMonitor(ctx context.Context) (ResultMonitor, error) {
 	var res ResultMonitor
 	resch := make(chan ResultMonitor, 1)
 	cctx, cancel := context.WithTimeout(ctx, time.Second*5)
@@ -754,16 +758,18 @@ func (h *MonitoringHandler) getResultMonitor(ctx context.Context) (ResultMonitor
 	case <-cctx.Done():
 		return res, errors.New("timeout")
 	case h.monich <- RequestMonitor{wch: resch}:
+		// リクエスト送信
 	}
 	select {
 	case <-cctx.Done():
 		return res, errors.New("timeout")
 	case res = <-resch:
+		// 結果の受信
 	}
 	return res, nil
 }
 
-func (h *MonitoringHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *GetMonitoringHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	res, err := h.getResultMonitor(r.Context())
 	if err == nil {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
