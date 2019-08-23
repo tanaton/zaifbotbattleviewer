@@ -314,8 +314,10 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss, key string, 
 				// 先の処理に丸投げ
 				ch <- dialerr
 			} else {
-				defer con.Close() // 2回呼ばれるかも
+				defer con.Close()
+				wg.Add(1)
 				go func() {
+					defer wg.Done()
 					for {
 						s := Stream{}
 						err := con.ReadJSON(&s)
