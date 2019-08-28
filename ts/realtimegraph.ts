@@ -304,7 +304,7 @@ class Graph {
 	private focus_domain_yaxis_update: boolean = false;
 	private focus_xaxis_sec: number = 120;
 
-	constructor(obj: Readonly<Stream>) {
+	constructor(obj: Stream) {
 		this.focus_width = 850 - this.focus_margin.left - this.focus_margin.right;
 		this.focus_height = 500 - this.focus_margin.top - this.focus_margin.bottom;
 		this.summary_width = 850 - this.summary_margin.left - this.summary_margin.right;
@@ -515,7 +515,7 @@ class Graph {
 			.attr("class", "y axis")
 			.call(this.depth_yAxis);
 	}
-	private init(data: Readonly<Stream>): void {
+	private init(data: Stream): void {
 		this.summary_color.domain([]);
 		this.addsig(data);
 		//this.addContext(data);
@@ -536,9 +536,10 @@ class Graph {
 				};
 				let flag = false;
 				for(const it of this.context_data){
-					if(it.values.length > 0 && data.Signals !== undefined){
+					const val = it.values;
+					if(val.length > 0 && data.Signals !== undefined){
 						data.Signals[it.name] = {
-							Data: it.values[it.values.length - 1].data
+							Data: val[val.length - 1].data
 						};
 						flag = true;
 					}
@@ -572,7 +573,7 @@ class Graph {
 			doc.innerHTML = "";
 		}
 	}
-	private addsig(data: Readonly<Stream>): boolean {
+	private addsig(data: Stream): boolean {
 		const date = data.Date;
 		const sigs = data.Signals;
 		let ret = false;
@@ -594,7 +595,7 @@ class Graph {
 		return ret;
 	}
 	// copy on write的な戦略でメモリ管理する
-	private static appendData(data: Context, val: Readonly<ChartPathData>, realtime?: boolean): boolean {
+	private static appendData(data: Context, val: ChartPathData, realtime?: boolean): boolean {
 		let ret = false;
 		const dv = data.values;
 		const old: ChartPathData | undefined = dv[dv.length - 1];
@@ -625,7 +626,7 @@ class Graph {
 		}
 		return ret;
 	}
-	public addContext(data: Readonly<Stream>): void {
+	public addContext(data: Stream): void {
 		const date = data.Date;
 		const datestart = new Date(date.getTime() - (this.focus_xaxis_sec * 1000));
 		const l = this.focus_data.length;
@@ -643,6 +644,7 @@ class Graph {
 				};
 				Graph.appendData(fd, cpd, true);
 				this.draw_focus = true;
+
 				const update = Graph.appendData(cd, cpd);
 				this.focus_data_legend[i].last_price = d;
 				// データサイズが大きくなり過ぎないように調節
@@ -673,7 +675,7 @@ class Graph {
 			this.draw_summary_old_date = date;
 		}
 	}
-	public addDepth(data: Readonly<Stream>): void {
+	public addDepth(data: Stream): void {
 		const deps = data.Depths || {};
 		[deps.Asks, deps.Bids].forEach((it, i) => {
 			if(it){
@@ -758,7 +760,7 @@ class Graph {
 				}
 			}
 		}
-	
+
 		this.focus_domain_yaxis_update = false;
 		this.focus_x.domain(focus_xd);
 		this.summary_x.domain(summary_xd);
@@ -938,7 +940,7 @@ class Client {
 	private static getDirection(action: DirectionEng): Direction {
 		return action === "ask" ? "▼" : "▲";
 	}
-	private update(obj: Readonly<ZaifStream>){
+	private update(obj: ZaifStream){
 		const data: Stream = {
 			Name: obj.currency_pair,
 			Date: new Date(),
@@ -965,7 +967,7 @@ class Client {
 		// vue用
 		this.updateView(obj);
 	}
-	private updateView(obj: Readonly<ZaifStream>): void {
+	private updateView(obj: ZaifStream): void {
 		for(const key in dispdata.currencys){
 			if(isCurrencyPair(key) && dispdata.currencys.hasOwnProperty(key)){
 				dispdata.currencys[key].active = "";
@@ -1032,10 +1034,10 @@ class Client {
 			this.graph.restartTimer(fps);
 		}
 	}
-	private createGraph(obj: Readonly<Stream>): void {
+	private createGraph(obj: Stream): void {
 		this.graph = new Graph(obj);
 	}
-	private addData(obj: Readonly<Stream>): void {
+	private addData(obj: Stream): void {
 		if(this.graph !== undefined){
 			this.graph.addContext(obj);
 			this.graph.addDepth(obj);
