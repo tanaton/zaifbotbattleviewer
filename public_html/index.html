@@ -50,6 +50,21 @@ body {
 .table-hover tbody tr:hover.board-bid > td {
 	background-color: #e6ffe6;
 }
+.trades-leave-active,
+.trades-enter-active {
+    transition: opacity 5s;
+}
+.trades-leave-to,
+.trades-enter {
+    opacity: 0;
+}
+.trades-leave,
+.trades-enter-to {
+    opacity: 1;
+}
+.trades-move {
+    transition: transform 5s;
+}
 [v-cloak] {
 	display: none;
 }
@@ -115,14 +130,14 @@ body {
 										<th colspan="4">最近の取引 ({{ currency_pair.first }}/{{ currency_pair.second }})</th>
 									</tr>
 								</thead>
-								<tbody>
-									<tr v-for="trade in trades" class="trade">
+								<transition-group name="trades" tag="tbody">
+									<tr v-for="trade in trades" v-bind:key="trade.tid" class="trade">
 										<td :class="trade.trade_type" class="font-weight-bold">{{ trade.direction }}</td>
 										<td :class="trade.trade_type" class="font-weight-bold">{{ trade.price }}</td>
 										<td :class="trade.trade_type">{{ trade.amount }}</td>
 										<td :class="trade.trade_type">{{ trade.date }}</td>
 									</tr>
-								</tbody>
+								</transition-group>
 							</table>
 						</div>
 						<span v-cloak>グラフ軸との時間差：{{ date_diff }}秒</span>

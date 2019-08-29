@@ -70,6 +70,7 @@ type Box = {
 }
 
 type TradeView = {
+	readonly tid: number;
 	readonly trade_type: DirectionEng;
 	readonly direction: Direction | "";
 	readonly price_orig: number;
@@ -103,6 +104,7 @@ type ZaifStream = {
 	asks: readonly [number, number][];
 	bids: readonly [number, number][];
 	trades: readonly {
+		readonly tid: number;
 		readonly trade_type: DirectionEng;
 		readonly price: number;
 		readonly amount: number;
@@ -139,6 +141,7 @@ function isZaifStream(a: any): a is ZaifStream {
 		return false;
 	}
 	if((a.trades as readonly {
+		readonly tid: number;
 		readonly trade_type: DirectionEng;
 		readonly price: number;
 		readonly amount: number;
@@ -997,6 +1000,7 @@ class Client {
 				}
 			}
 			tr.unshift({
+				tid: it.tid,
 				trade_type: it.trade_type,
 				direction: dir,
 				price_orig: it.price,
