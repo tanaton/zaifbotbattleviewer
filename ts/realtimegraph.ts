@@ -607,10 +607,7 @@ class Graph {
 				if((oldold !== undefined) && (oldold.data === old.data) && (old.data === val.data)){
 					// 2つ前と1つ前と今回のデータが同じ場合
 					// 1つ前のデータを今回の時間に更新
-					dv[dv.length - 1] = {
-						date: val.date,
-						data: old.data
-					}
+					dv[dv.length - 1] = val;
 				} else {
 					dv.push(val);
 					ret = true;
