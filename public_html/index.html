@@ -50,19 +50,22 @@ body {
 .table-hover tbody tr:hover.board-bid > td {
 	background-color: #e6ffe6;
 }
+[v-cloak] {
+	display: none;
+}
 		</style>
 	</head>
 	<body class="bg-light text-dark">
 		<div id="container">
 			<nav class="navbar fixed-top navbar-expand-lg navbar-light bg-light text-dark">
-				<span class="navbar-brand">zaifの取引情報を表示するやつ ({{ currency_pair.first }}/{{ currency_pair.second }})</span>
+				<span class="navbar-brand" v-cloak>zaifの取引情報を表示するやつ ({{ currency_pair.first }}/{{ currency_pair.second }})</span>
 				<div class="collapse navbar-collapse" id="navbarText">
 					<ul class="navbar-nav mr-auto">
 						<li class="nav-item active">
-							<span class="navbar-brand"><span :class="last_trade.type">{{ last_trade.price }} {{ last_trade.action }}</span></span>
+							<span class="navbar-brand"><span :class="last_trade.type" v-cloak>{{ last_trade.price }} {{ last_trade.action }}</span></span>
 						</li>
 						<li v-for="currency in currencys" class="nav-item" :class="currency.active">
-							<a class="navbar-brand nav-link" :href="currency.hash">{{ currency.name }}</a>
+							<a class="navbar-brand nav-link" :href="currency.hash" v-cloak>{{ currency.name }}</a>
 						</li>
 					</ul>
 					<span class="navbar-text">
@@ -78,7 +81,7 @@ body {
 								<h2>取引の様子</h2>
 							</div>
 							<div class="col-4">
-								<div class="form-group row justify-content-end">
+								<div class="form-group row justify-content-end" v-cloak>
 									<label for="staticFocusFps" class="col-sm-4 col-form-label">更新間隔</label>
 									<select class="form-control col-sm-4" v-model="focus.fps.selected">
 										<option v-for="option in focus.fps.options" v-bind:value="option.value">
@@ -88,7 +91,7 @@ body {
 								</div>
 							</div>
 							<div class="col-4">
-								<div class="form-group row justify-content-end">
+								<div class="form-group row justify-content-end" v-cloak>
 									<label for="staticFocusTime" class="col-sm-4 col-form-label">表示時間</label>
 									<select class="form-control col-sm-4" v-model="focus.xaxis.selected">
 										<option v-for="option in focus.xaxis.options" v-bind:value="option.value">
@@ -101,12 +104,12 @@ body {
 						<div id="svgarea"></div>
 					</div>
 					<div class="col-xl-3">
-						<span>1{{ currency_pair.first }}の現在価格 ({{ currency_pair.second }})</span>
+						<span v-cloak>1{{ currency_pair.first }}の現在価格 ({{ currency_pair.second }})</span>
 						<p>
-							<span id="last-trade" :class="last_trade.type">{{ last_trade.price }} {{ last_trade.action }}</span>
+							<span id="last-trade" :class="last_trade.type" v-cloak>{{ last_trade.price }} {{ last_trade.action }}</span>
 						</p>
 						<div class="table-responsive">
-							<table class="table table-sm table-striped table-hover">
+							<table class="table table-sm table-striped table-hover" v-cloak>
 								<thead>
 									<tr>
 										<th colspan="4">最近の取引 ({{ currency_pair.first }}/{{ currency_pair.second }})</th>
@@ -122,14 +125,14 @@ body {
 								</tbody>
 							</table>
 						</div>
-						<span>グラフ軸との時間差：{{ date_diff }}秒</span>
+						<span v-cloak>グラフ軸との時間差：{{ date_diff }}秒</span>
 					</div>
 				</div>
 				<div class="row justify-content-center">
 					<div class="col-xl-6">
 						<h2>Bid</h2>
 						<div class="table-responsive">
-							<table class="table table-sm table-striped table-hover">
+							<table class="table table-sm table-striped table-hover" v-cloak>
 								<thead>
 									<tr>
 										<th>価格 ({{ currency_pair.second }})</th>
@@ -150,7 +153,7 @@ body {
 					<div class="col-xl-6">
 						<h2>Ask</h2>
 						<div class="table-responsive">
-							<table class="table table-sm table-striped table-hover">
+							<table class="table table-sm table-striped table-hover" v-cloak>
 								<thead>
 									<tr>
 										<th>価格 ({{ currency_pair.second }})</th>
