@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
-	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
 	"errors"
@@ -68,15 +67,13 @@ func (ts Unixtime) MarshalJSON() ([]byte, error) {
 	return strconv.AppendInt(buf, time.Time(ts).Unix(), 10), nil
 }
 func (ts *Unixtime) UnmarshalBinary(data []byte) error {
-	i := binary.LittleEndian.Uint64(data)
-	t := time.Unix(int64(i), 0)
+	t := time.Time(*ts)
+	err := t.UnmarshalBinary(data)
 	*ts = Unixtime(t)
-	return nil
+	return err
 }
-func (ts Unixtime) MarshalBinary() (data []byte, err error) {
-	var buf [8]byte
-	binary.LittleEndian.PutUint64(buf[:], uint64(time.Time(ts).Unix()))
-	return buf[:], nil
+func (ts Unixtime) MarshalBinary() ([]byte, error) {
+	return time.Time(ts).MarshalBinary()
 }
 
 type Stream struct {
