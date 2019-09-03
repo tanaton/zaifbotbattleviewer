@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"encoding/binary"
+	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"os"
@@ -64,6 +67,17 @@ func (ts Unixtime) MarshalJSON() ([]byte, error) {
 	buf := make([]byte, 0, 10)
 	return strconv.AppendInt(buf, time.Time(ts).Unix(), 10), nil
 }
+func (ts *Unixtime) UnmarshalBinary(data []byte) error {
+	i := binary.LittleEndian.Uint64(data)
+	t := time.Unix(int64(i), 0)
+	*ts = Unixtime(t)
+	return nil
+}
+func (ts Unixtime) MarshalBinary() (data []byte, err error) {
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], uint64(time.Time(ts).Unix()))
+	return buf[:], nil
+}
 
 type Stream struct {
 	Asks         []PriceAmount `json:"asks"`
@@ -88,11 +102,11 @@ type StoreDataPacket struct {
 	sd   StoreData
 }
 type StoreItem struct {
-	date time.Time
-	name string
-	gw   *gzip.Writer
-	w    *bufio.Writer
-	fp   *os.File
+	date     time.Time
+	name     string
+	nonempty bool
+	w        *bufio.Writer
+	fp       *os.File
 }
 type Result struct {
 	err error
@@ -362,29 +376,28 @@ func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan Stream
 	defer wg.Done()
 	slm := make(map[string][]StoreData, 8)
 	oldstream := make(map[string]Stream, 8)
-	now := time.Now()
 	for key := range zaifStremUrlList {
-		sl, err := storeReaderProc(now, key)
+		sl, err := streamBufferReadProc(key)
 		if err != nil {
-			log.Warnw("ファイル読み込み失敗", "error", err)
+			log.Warnw("バッファの読み込みに失敗しました。", "error", err)
 		}
 		slm[key] = sl
 	}
 	for {
 		select {
 		case <-ctx.Done():
+			for key, sd := range slm {
+				err := streamBufferWriteProc(key, sd)
+				if err != nil {
+					log.Warnw("バッファの保存に失敗しました。", "error", err, "key", key)
+				}
+			}
 			log.Infow("streamStoreProc終了")
 			return
 		case it := <-rsch:
-			sl, ok := appendStore(slm[it.name], it.s, oldstream[it.name])
+			sl := appendStore(slm[it.name], it.s, oldstream[it.name], wsch, it.name)
 			slm[it.name] = sl
 			oldstream[it.name] = it.s
-			if ok {
-				wsch <- StoreDataPacket{
-					name: it.name,
-					sd:   slm[it.name][len(slm[it.name])-1],
-				}
-			}
 		case it := <-reqch:
 			if sl, ok := slm[it.name]; ok {
 				if it.filter != nil {
@@ -403,34 +416,36 @@ func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan Stream
 	}
 }
 
-func storeReaderProc(now time.Time, key string) ([]StoreData, error) {
-	sir, err := NewStoreItemReader(now, key)
+func streamBufferReadProc(key string) ([]StoreData, error) {
+	p := createBufferFilePath(key)
+	rfp, err := os.Open(p)
 	if err != nil {
 		return nil, err
 	}
-	defer sir.Close()
-	sl := make([]StoreData, 0, StoreDataMax+1)
-	scanner := bufio.NewScanner(sir)
-	for scanner.Scan() {
-		sd := StoreData{}
-		err := json.Unmarshal(scanner.Bytes(), &sd)
-		if err != nil {
-			log.Warnw("JSON解析失敗", "error", err, "json", scanner.Text())
-			break
-		}
-		sl = append(sl, sd)
-		for len(sl) > StoreDataMax {
-			sl[0] = StoreData{}
-			sl = sl[1:]
-		}
+	defer rfp.Close()
+	var sd []StoreData
+	err = gob.NewDecoder(rfp).Decode(&sd)
+	return sd, err
+}
+
+func streamBufferWriteProc(key string, sd []StoreData) error {
+	p := createBufferFilePath(key)
+	direrr := createDir(p)
+	if direrr != nil {
+		return direrr
 	}
-	return sl, nil
+	wfp, err := os.Create(p)
+	if err != nil {
+		return err
+	}
+	defer wfp.Close()
+	err = gob.NewEncoder(wfp).Encode(sd)
+	return err
 }
 
 func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StoreDataPacket) {
 	defer wg.Done()
-	old := time.Now()
-	tc := time.NewTicker(time.Second)
+	var old time.Time
 	m := make(map[string]*StoreItem, 8)
 	for {
 		select {
@@ -438,39 +453,32 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StoreD
 			for _, it := range m {
 				it.Close()
 			}
-			tc.Stop()
 			log.Infow("storeWriterProc終了")
 			return
 		case it := <-rsch:
 			si, ok := m[it.name]
+			date := time.Time(it.sd.Timestamp)
 			if !ok {
 				var err error
-				si, err = NewStoreItem(old, it.name)
+				si, err = NewStoreItem(date, it.name)
 				if err != nil {
 					log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", it.name)
 					break
 				}
-				err = si.readData()
-				if err != nil {
-					log.Infow("JSONバックアップファイルの読み込みができませんでした。", "error", err, "name", it.name)
-				}
 				m[it.name] = si
-			}
-			err := json.NewEncoder(si.w).Encode(it.sd)
-			if err != nil {
-				log.Warnw("JSONファイル出力に失敗しました。", "error", err)
-			}
-		case now := <-tc.C:
-			if now.Day() != old.Day() {
+			} else if date.Day() != old.Day() {
 				for key, it := range m {
-					it.Close()
-					err := it.reset(now, key)
+					err := it.reset(date, key)
 					if err != nil {
 						log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", key)
 						break
 					}
 				}
-				old = now
+			}
+			old = date
+			err := si.WriteJsonLine(it.sd)
+			if err != nil {
+				log.Warnw("JSONファイル出力に失敗しました。", "error", err)
 			}
 		}
 	}
@@ -513,18 +521,92 @@ func NewStoreItem(date time.Time, name string) (*StoreItem, error) {
 	si := &StoreItem{}
 	si.date = date
 	si.name = name
+	si.nonempty = false
+	si.w = bufio.NewWriterSize(ioutil.Discard, 16*1024)
 	p := si.createPathTmp()
 	if err := createDir(p); err != nil {
 		return nil, err
 	}
-	fp, err := os.Create(p)
-	if err != nil {
-		return nil, err
+	err := si.fopen(p)
+	return si, err
+}
+
+func (si *StoreItem) WriteJsonLine(d interface{}) error {
+	if si.nonempty {
+		si.w.Write([]byte{',', '\n'})
 	}
-	si.gw, _ = gzip.NewWriterLevel(fp, gzip.BestSpeed)
-	si.w = bufio.NewWriterSize(si.gw, 16*1024)
-	si.fp = fp
-	return si, nil
+	err := json.NewEncoder(si.w).Encode(d)
+	si.nonempty = true
+	return err
+}
+
+func (si *StoreItem) Flush() error {
+	return si.w.Flush()
+}
+
+func (si *StoreItem) Close() error {
+	si.w.WriteByte(']')
+	si.Flush()
+	si.fp.Close()
+	return si.store()
+}
+
+func (si *StoreItem) fopen(p string) error {
+	st, err := os.Stat(p)
+	if err != nil {
+		fp, err := os.Create(p)
+		if err != nil {
+			return err
+		}
+		si.fp = fp
+		si.w.Reset(si.fp)
+		si.w.WriteByte('[')
+		si.nonempty = false
+	} else {
+		fp, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
+		if err != nil {
+			return err
+		}
+		si.fp = fp
+		si.w.Reset(si.fp)
+		if st.Size() > 2 {
+			si.nonempty = true
+		} else {
+			si.nonempty = false
+		}
+	}
+	return nil
+}
+
+func (si *StoreItem) reset(date time.Time, name string) error {
+	si.Close()
+	si.date = date
+	p := si.createPathTmp()
+	return si.fopen(p)
+}
+
+func (si *StoreItem) store() error {
+	n := createStoreFilePath(si.date, si.name) + ".gz"
+	o := si.createPathTmp()
+	rfp, err := os.Open(o)
+	if err != nil {
+		return err
+	}
+	defer rfp.Close()
+	wfp, err := os.Create(n)
+	if err != nil {
+		return err
+	}
+	defer wfp.Close()
+	gz, _ := gzip.NewWriterLevel(wfp, gzip.BestSpeed)
+	defer gz.Close()
+	r := bufio.NewReaderSize(rfp, 128*1024)
+	_, err = io.Copy(gz, r)
+	return err
+}
+
+func (si *StoreItem) createPathTmp() string {
+	return createStoreFilePath(si.date, si.name) + ".tmp"
 }
 
 func createDir(p string) error {
@@ -543,76 +625,12 @@ func createDir(p string) error {
 	return err
 }
 
-func (si *StoreItem) reset(date time.Time, name string) error {
-	si.date = date
-	p := si.createPathTmp()
-	fp, err := os.Create(p)
-	if err != nil {
-		return err
-	}
-	si.fp = fp
-	si.gw.Reset(si.fp)
-	si.w.Reset(si.gw)
-	return nil
-}
-
-func (si *StoreItem) readData() error {
-	sir, err := NewStoreItemReader(si.date, si.name)
-	if err != nil {
-		return err
-	}
-	defer sir.Close()
-	_, err = io.Copy(si.w, sir)
-	return err
-}
-
-func (si *StoreItem) Flush() error {
-	return si.w.Flush()
-}
-
-func (si *StoreItem) Close() error {
-	si.Flush()
-	si.gw.Close()
-	si.fp.Close()
-	n := createStoreFilePath(si.date, si.name)
-	o := si.createPathTmp()
-	return os.Rename(o, n)
-}
-
-func (si *StoreItem) createPathTmp() string {
-	return createStoreFilePath(si.date, si.name) + ".tmp"
-}
-
 func createStoreFilePath(date time.Time, name string) string {
-	return filepath.Join("data", fmt.Sprintf("%s_%s.json.gz", date.Format("20060102"), name))
+	return filepath.Join("data", fmt.Sprintf("%s_%s.json", date.Format("20060102"), name))
 }
 
-type StoreItemReader struct {
-	fp *os.File
-	gr *gzip.Reader
-}
-
-func NewStoreItemReader(date time.Time, name string) (*StoreItemReader, error) {
-	sir := &StoreItemReader{}
-	p := createStoreFilePath(date, name)
-	var err error
-	sir.fp, err = os.Open(p)
-	if err != nil {
-		return nil, err
-	}
-	sir.gr, err = gzip.NewReader(sir.fp)
-	if err != nil {
-		sir.fp.Close()
-		return nil, err
-	}
-	return sir, nil
-}
-func (sir *StoreItemReader) Read(p []byte) (n int, err error) {
-	return sir.gr.Read(p)
-}
-func (sir *StoreItemReader) Close() error {
-	sir.gr.Close()
-	return sir.fp.Close()
+func createBufferFilePath(name string) string {
+	return filepath.Join("data", fmt.Sprintf("%s_buffer.gob", name))
 }
 
 type ResponseInfo struct {
@@ -657,7 +675,7 @@ func (bbrw *MonitoringResponseWriter) Finish() {
 	bbrw.rich <- bbrw.ri
 }
 
-func appendStore(sl []StoreData, s, olds Stream) ([]StoreData, bool) {
+func appendStore(sl []StoreData, s, olds Stream, wsch chan<- StoreDataPacket, name string) []StoreData {
 	write := false
 	sd := StoreData{}
 	sd.Timestamp = Unixtime(s.Timestamp)
@@ -691,11 +709,16 @@ func appendStore(sl []StoreData, s, olds Stream) ([]StoreData, bool) {
 	if write {
 		sl = append(sl, sd)
 		for len(sl) > StoreDataMax {
+			// はみ出た分をファイルに保存する
+			wsch <- StoreDataPacket{
+				name: name,
+				sd:   sl[0],
+			}
 			sl[0] = StoreData{} // どうせ使わないのでGCのためにメモリゼロ化
 			sl = sl[1:]
 		}
 	}
-	return sl, write
+	return sl
 }
 
 func (h *OldStreamHandler) getStoreData(ctx context.Context, name string) ([]StoreData, error) {
