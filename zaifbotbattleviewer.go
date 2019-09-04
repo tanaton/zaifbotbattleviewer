@@ -376,24 +376,36 @@ func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan Stream
 	for key := range zaifStremUrlList {
 		sl, err := streamBufferReadProc(key)
 		if err != nil {
-			log.Warnw("バッファの読み込みに失敗しました。", "error", err)
+			log.Warnw("バッファの読み込みに失敗しました。", "error", err, "key", key)
 		}
 		slm[key] = sl
+		oldstream[key] = Stream{}
 	}
+	defer func() {
+		for key, sd := range slm {
+			err := streamBufferWriteProc(key, sd)
+			if err != nil {
+				log.Warnw("バッファの保存に失敗しました。", "error", err, "key", key)
+			}
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
-			for key, sd := range slm {
-				err := streamBufferWriteProc(key, sd)
-				if err != nil {
-					log.Warnw("バッファの保存に失敗しました。", "error", err, "key", key)
-				}
-			}
 			log.Infow("streamStoreProc終了")
 			return
 		case it := <-rsch:
-			sl := appendStore(slm[it.name], it.s, oldstream[it.name], wsch, it.name)
-			slm[it.name] = sl
+			sl, ok := slm[it.name]
+			if !ok {
+				log.Warnw("slmに要素がありません。", "key", it.name)
+				break
+			}
+			str, ok := oldstream[it.name]
+			if !ok {
+				log.Warnw("oldstreamに要素がありません。", "key", it.name)
+				break
+			}
+			slm[it.name] = appendStore(sl, it.s, str, wsch, it.name)
 			oldstream[it.name] = it.s
 		case it := <-reqch:
 			if sl, ok := slm[it.name]; ok {
@@ -436,8 +448,7 @@ func streamBufferWriteProc(key string, sd []StoreData) error {
 		return err
 	}
 	defer wfp.Close()
-	err = gob.NewEncoder(wfp).Encode(sd)
-	return err
+	return gob.NewEncoder(wfp).Encode(sd)
 }
 
 func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StoreDataPacket) {
@@ -566,11 +577,7 @@ func (si *StoreItem) fopen(p string) error {
 		}
 		si.fp = fp
 		si.w.Reset(si.fp)
-		if st.Size() > 2 {
-			si.nonempty = true
-		} else {
-			si.nonempty = false
-		}
+		si.nonempty = st.Size() > 2
 	}
 	return nil
 }
