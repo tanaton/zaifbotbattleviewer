@@ -300,6 +300,7 @@ func startExitManageProc(ctx context.Context, wg *sync.WaitGroup) (context.Conte
 
 func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss string, wsch chan<- Stream) {
 	defer wg.Done()
+	defer close(wsch)
 	wait := time.Duration(rand.Uint64()%5000) * time.Millisecond
 	for {
 		time.Sleep(wait)
@@ -361,15 +362,18 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss string, wsch 
 
 func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <-chan Stream, wsch chan<- StoreData, reqch <-chan Request) {
 	defer wg.Done()
+	defer close(wsch)
 	oldstream := Stream{}
 	sl, err := streamBufferReadProc(key)
 	if err != nil {
 		log.Warnw("バッファの読み込みに失敗しました。", "error", err, "key", key)
 	}
 	defer func() {
-		err := streamBufferWriteProc(key, sl)
-		if err != nil {
-			log.Warnw("バッファの保存に失敗しました。", "error", err, "key", key)
+		if sl != nil {
+			err := streamBufferWriteProc(key, sl)
+			if err != nil {
+				log.Warnw("バッファの保存に失敗しました。", "error", err, "key", key)
+			}
 		}
 	}()
 	for {
