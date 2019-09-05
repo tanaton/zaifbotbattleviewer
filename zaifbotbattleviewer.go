@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -90,14 +89,6 @@ type StoreData struct {
 	Trade     *Trade       `json:"trade,omitempty"`
 	Timestamp Unixtime     `json:"ts"`
 }
-type StreamPacket struct {
-	name string
-	s    Stream
-}
-type StoreDataPacket struct {
-	name string
-	sd   StoreData
-}
 type StoreItem struct {
 	date     time.Time
 	name     string
@@ -110,7 +101,6 @@ type Result struct {
 	sl  []StoreData
 }
 type Request struct {
-	name   string
 	filter func([]StoreData) []StoreData
 	wch    chan<- Result
 }
@@ -135,6 +125,7 @@ type RequestMonitor struct {
 	wch chan<- ResultMonitor
 }
 type OldStreamHandler struct {
+	cp    string
 	reqch chan<- Request
 }
 type GetMonitoringHandler struct {
@@ -168,29 +159,30 @@ func init() {
 
 func main() {
 	var wg sync.WaitGroup
-	reqch := make(chan Request, 8)
+	ctx, exitch := startExitManageProc(context.Background(), &wg)
+
+	for key, u := range zaifStremUrlList {
+		reqch := make(chan Request, 8)
+		sch := make(chan Stream, 8)
+		storesch := make(chan StoreData, 8)
+		osh := &OldStreamHandler{cp: key, reqch: reqch}
+		wg.Add(1)
+		go streamReaderProc(ctx, &wg, u, sch)
+		wg.Add(1)
+		go streamStoreProc(ctx, &wg, key, sch, storesch, reqch)
+		wg.Add(1)
+		go storeWriterProc(ctx, &wg, key, storesch)
+		// URL設定
+		http.Handle("/api/zaif/1/oldstream/"+key, osh)
+	}
+
 	monich := make(chan RequestMonitor, 8)
 	rich := make(chan ResponseInfo, 32)
-	sch := make(chan StreamPacket, 32)
-	storesch := make(chan StoreDataPacket, 32)
 
-	ctx, exitch := startExitManageProc(context.Background(), &wg)
-	for key, u := range zaifStremUrlList {
-		// ローカル化
-		key := key
-		u := u
-		wg.Add(1)
-		go streamReaderProc(ctx, &wg, u, key, sch)
-	}
-	wg.Add(1)
-	go streamStoreProc(ctx, &wg, sch, storesch, reqch)
-	wg.Add(1)
-	go storeWriterProc(ctx, &wg, storesch)
 	wg.Add(1)
 	go serverMonitoringProc(ctx, &wg, rich, monich)
 
 	// URL設定
-	http.Handle("/api/zaif/1/oldstream/", &OldStreamHandler{reqch: reqch})
 	http.Handle("/api/unko.in/1/monitor", &GetMonitoringHandler{monich: monich})
 	http.Handle("/", http.FileServer(http.Dir("./public_html")))
 
@@ -201,6 +193,7 @@ func main() {
 		shutdown(ctx, &wg)
 	}
 	h := MonitoringHandler(ghfunc(http.DefaultServeMux), rich)
+
 	// サーバ情報
 	sl := []Srv{
 		Srv{
@@ -305,7 +298,7 @@ func startExitManageProc(ctx context.Context, wg *sync.WaitGroup) (context.Conte
 	return ectx, exitch
 }
 
-func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss, key string, wsch chan<- StreamPacket) {
+func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss string, wsch chan<- Stream) {
 	defer wg.Done()
 	wait := time.Duration(rand.Uint64()%5000) * time.Millisecond
 	for {
@@ -336,10 +329,7 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss, key string, 
 							ch <- err
 							return
 						}
-						wsch <- StreamPacket{
-							name: key,
-							s:    s,
-						}
+						wsch <- s
 					}
 				}()
 			}
@@ -353,13 +343,13 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss, key string, 
 				exit = true
 			case err := <-ch:
 				// 普通の通信異常（リトライするやつ）
-				log.Warnw("websocket通信に失敗しました。", "error", err, "url", wss, "key", key)
+				log.Warnw("websocket通信に失敗しました。", "error", err, "url", wss)
 				exit = false
 			}
 			return exit
 		}()
 		if exit {
-			log.Infow("streamReaderProc終了", "url", wss, "key", key)
+			log.Infow("streamReaderProc終了", "url", wss)
 			return
 		}
 		if wait < 180*time.Second {
@@ -369,24 +359,17 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss, key string, 
 	}
 }
 
-func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StreamPacket, wsch chan<- StoreDataPacket, reqch <-chan Request) {
+func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <-chan Stream, wsch chan<- StoreData, reqch <-chan Request) {
 	defer wg.Done()
-	slm := make(map[string][]StoreData, 8)
-	oldstream := make(map[string]Stream, 8)
-	for key := range zaifStremUrlList {
-		sl, err := streamBufferReadProc(key)
-		if err != nil {
-			log.Warnw("バッファの読み込みに失敗しました。", "error", err, "key", key)
-		}
-		slm[key] = sl
-		oldstream[key] = Stream{}
+	oldstream := Stream{}
+	sl, err := streamBufferReadProc(key)
+	if err != nil {
+		log.Warnw("バッファの読み込みに失敗しました。", "error", err, "key", key)
 	}
 	defer func() {
-		for key, sd := range slm {
-			err := streamBufferWriteProc(key, sd)
-			if err != nil {
-				log.Warnw("バッファの保存に失敗しました。", "error", err, "key", key)
-			}
+		err := streamBufferWriteProc(key, sl)
+		if err != nil {
+			log.Warnw("バッファの保存に失敗しました。", "error", err, "key", key)
 		}
 	}()
 	for {
@@ -394,32 +377,17 @@ func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan Stream
 		case <-ctx.Done():
 			log.Infow("streamStoreProc終了")
 			return
-		case it := <-rsch:
-			sl, ok := slm[it.name]
-			if !ok {
-				log.Warnw("slmに要素がありません。", "key", it.name)
-				break
-			}
-			str, ok := oldstream[it.name]
-			if !ok {
-				log.Warnw("oldstreamに要素がありません。", "key", it.name)
-				break
-			}
-			slm[it.name] = appendStore(sl, it.s, str, wsch, it.name)
-			oldstream[it.name] = it.s
+		case s := <-rsch:
+			sl = appendStore(sl, s, oldstream, wsch, key)
+			oldstream = s
 		case it := <-reqch:
-			if sl, ok := slm[it.name]; ok {
-				if it.filter != nil {
-					sl = it.filter(sl)
-				}
-				it.wch <- Result{
-					err: nil,
-					sl:  sl,
-				}
-			} else {
-				it.wch <- Result{
-					err: errors.New("存在しないキーです。"),
-				}
+			asl := sl
+			if it.filter != nil {
+				asl = it.filter(asl)
+			}
+			it.wch <- Result{
+				err: nil,
+				sl:  asl,
 			}
 		}
 	}
@@ -451,40 +419,36 @@ func streamBufferWriteProc(key string, sd []StoreData) error {
 	return gob.NewEncoder(wfp).Encode(sd)
 }
 
-func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, rsch <-chan StoreDataPacket) {
+func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <-chan StoreData) {
 	defer wg.Done()
 	var old time.Time
-	m := make(map[string]*StoreItem, 8)
+	var si *StoreItem
 	for {
 		select {
 		case <-ctx.Done():
-			for _, it := range m {
-				it.Close()
+			if si != nil {
+				si.Close()
 			}
 			log.Infow("storeWriterProc終了")
 			return
-		case it := <-rsch:
-			si, ok := m[it.name]
-			date := time.Time(it.sd.Timestamp)
-			if !ok {
+		case sd := <-rsch:
+			date := time.Time(sd.Timestamp)
+			if si == nil {
 				var err error
-				si, err = NewStoreItem(date, it.name)
+				si, err = NewStoreItem(date, key)
 				if err != nil {
-					log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", it.name)
+					log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", key)
 					break
 				}
-				m[it.name] = si
 			} else if date.Day() != old.Day() {
-				for key, it := range m {
-					err := it.reset(date, key)
-					if err != nil {
-						log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", key)
-						break
-					}
+				err := si.reset(date)
+				if err != nil {
+					log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", key)
+					break
 				}
 			}
 			old = date
-			err := si.WriteJsonLine(it.sd)
+			err := si.WriteJsonLine(sd)
 			if err != nil {
 				log.Warnw("JSONファイル出力に失敗しました。", "error", err)
 			}
@@ -582,7 +546,7 @@ func (si *StoreItem) fopen(p string) error {
 	return nil
 }
 
-func (si *StoreItem) reset(date time.Time, name string) error {
+func (si *StoreItem) reset(date time.Time) error {
 	si.Close()
 	si.date = date
 	p := si.createPathTmp()
@@ -679,7 +643,7 @@ func (bbrw *MonitoringResponseWriter) Finish() {
 	bbrw.rich <- bbrw.ri
 }
 
-func appendStore(sl []StoreData, s, olds Stream, wsch chan<- StoreDataPacket, name string) []StoreData {
+func appendStore(sl []StoreData, s, olds Stream, wsch chan<- StoreData, name string) []StoreData {
 	write := false
 	sd := StoreData{}
 	sd.Timestamp = Unixtime(s.Timestamp)
@@ -714,10 +678,7 @@ func appendStore(sl []StoreData, s, olds Stream, wsch chan<- StoreDataPacket, na
 		sl = append(sl, sd)
 		for len(sl) > StoreDataMax {
 			// はみ出た分をファイルに保存する
-			wsch <- StoreDataPacket{
-				name: name,
-				sd:   sl[0],
-			}
+			wsch <- sl[0]
 			sl[0] = StoreData{} // どうせ使わないのでGCのためにメモリゼロ化
 			sl = sl[1:]
 		}
@@ -725,7 +686,7 @@ func appendStore(sl []StoreData, s, olds Stream, wsch chan<- StoreDataPacket, na
 	return sl
 }
 
-func (h *OldStreamHandler) getStoreData(ctx context.Context, name string) ([]StoreData, error) {
+func (h *OldStreamHandler) getStoreData(ctx context.Context) ([]StoreData, error) {
 	ch := make(chan Result, 1)
 	tctx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer func() {
@@ -733,7 +694,6 @@ func (h *OldStreamHandler) getStoreData(ctx context.Context, name string) ([]Sto
 		close(ch)
 	}()
 	req := Request{
-		name: name,
 		filter: func(s []StoreData) []StoreData {
 			return s
 		},
@@ -755,20 +715,18 @@ func (h *OldStreamHandler) getStoreData(ctx context.Context, name string) ([]Sto
 		// 結果の受信
 	}
 	if it.err != nil {
-		log.Warnw("ストリームデータの取得に失敗しました。", "error", it.err, "name", name)
+		log.Warnw("ストリームデータの取得に失敗しました。", "error", it.err, "name", h.cp)
 	}
 	return it.sl, nil
 }
 
 func (h *OldStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	p := r.URL.Path
-	_, file := path.Split(p)
-	sdl, err := h.getStoreData(r.Context(), file)
+	sdl, err := h.getStoreData(r.Context())
 	if err == nil {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		err = json.NewEncoder(w).Encode(sdl)
 		if err != nil {
-			log.Warnw("JSON出力に失敗しました。", "error", err, "path", p)
+			log.Warnw("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
 		}
 	} else {
 		http.NotFound(w, r)
