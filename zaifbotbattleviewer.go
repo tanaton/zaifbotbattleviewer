@@ -379,7 +379,7 @@ func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 	for {
 		select {
 		case <-ctx.Done():
-			log.Infow("streamStoreProc終了")
+			log.Infow("streamStoreProc終了", "key", key)
 			return
 		case s := <-rsch:
 			sl = appendStore(sl, s, oldstream, wsch, key)
@@ -433,7 +433,7 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 			if si != nil {
 				si.Close()
 			}
-			log.Infow("storeWriterProc終了")
+			log.Infow("storeWriterProc終了", "key", key)
 			return
 		case sd := <-rsch:
 			date := time.Time(sd.Timestamp)
