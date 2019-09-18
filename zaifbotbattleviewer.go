@@ -22,6 +22,7 @@ import (
 
 	"github.com/NYTimes/gziphandler"
 	"github.com/gorilla/websocket"
+	"github.com/tanaton/dtoa"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/acme/autocert"
 )
@@ -516,14 +517,11 @@ func (si *StoreItem) WriteJsonLine(d interface{}) error {
 	return err
 }
 
-func (si *StoreItem) Flush() error {
-	return si.w.Flush()
-}
-
 func (si *StoreItem) Close() error {
 	si.w.WriteByte(']')
-	si.Flush()
+	si.w.Flush()
 	si.fp.Close()
+	si.fp = nil
 	return si.store()
 }
 
@@ -724,14 +722,61 @@ func (h *OldStreamHandler) getStoreData(ctx context.Context) ([]StoreData, error
 	return it.sl, nil
 }
 
+func JSONEncoder(w io.Writer, sdl []StoreData) {
+	buf := make([]byte, 0, 32*1024)
+	buf = append(buf, '[')
+	for i, sd := range sdl {
+		if i > 0 {
+			buf = append(buf, `,{`...)
+		} else {
+			buf = append(buf, '{')
+		}
+		if sd.Ask != nil {
+			buf = append(buf, `"ask":[`...)
+			buf = dtoa.DtoaSimple(buf, sd.Ask[0], -1)
+			buf = append(buf, ',')
+			buf = dtoa.DtoaSimple(buf, sd.Ask[1], -1)
+			buf = append(buf, `],`...)
+		}
+		if sd.Bid != nil {
+			buf = append(buf, `"bid":[`...)
+			buf = dtoa.DtoaSimple(buf, sd.Bid[0], -1)
+			buf = append(buf, ',')
+			buf = dtoa.DtoaSimple(buf, sd.Bid[1], -1)
+			buf = append(buf, `],`...)
+		}
+		if sd.Trade != nil {
+			buf = append(buf, `"trade":{"currenty_pair":"`...)
+			buf = append(buf, sd.Trade.CurrentyPair...)
+			buf = append(buf, `","trade_type":"`...)
+			buf = append(buf, sd.Trade.TradeType...)
+			buf = append(buf, `","price":`...)
+			buf = dtoa.DtoaSimple(buf, sd.Trade.Price, -1)
+			buf = append(buf, `,"tid":`...)
+			buf = strconv.AppendUint(buf, sd.Trade.Tid, 10)
+			buf = append(buf, `,"amount":`...)
+			buf = dtoa.DtoaSimple(buf, sd.Trade.Amount, -1)
+			buf = append(buf, `,"date":`...)
+			buf = strconv.AppendUint(buf, sd.Trade.Date, 10)
+			buf = append(buf, `},`...)
+		}
+		buf = append(buf, `"ts":`...)
+		buf = strconv.AppendInt(buf, time.Time(sd.Timestamp).Unix(), 10)
+		buf = append(buf, '}')
+		if len(buf) > 16*1024 {
+			w.Write(buf)
+			buf = buf[:0]
+		}
+	}
+	buf = append(buf, ']')
+	w.Write(buf)
+}
+
 func (h *OldStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	sdl, err := h.getStoreData(r.Context())
 	if err == nil {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		err = json.NewEncoder(w).Encode(sdl)
-		if err != nil {
-			log.Warnw("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
-		}
+		JSONEncoder(w, sdl)
 	} else {
 		http.NotFound(w, r)
 	}
