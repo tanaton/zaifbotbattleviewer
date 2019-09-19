@@ -97,13 +97,12 @@ type StoreItem struct {
 	w        *bufio.Writer
 	fp       *os.File
 }
-type Result struct {
-	err error
-	sl  []StoreData
-}
-type Request struct {
+type RequestOldStream struct {
 	filter func([]StoreData) []StoreData
-	wch    chan<- Result
+	ch     chan<- []StoreData
+}
+type RequestLastPrice struct {
+	ch chan<- LastPrice
 }
 type Output struct {
 	Code   int
@@ -123,14 +122,17 @@ type ResultMonitor struct {
 	ResponseCodeNgCount uint
 }
 type RequestMonitor struct {
-	wch chan<- ResultMonitor
+	ch chan<- ResultMonitor
 }
 type OldStreamHandler struct {
 	cp    string
-	reqch chan<- Request
+	reqch chan<- RequestOldStream
+}
+type LastPriceHandler struct {
+	reqch chan<- RequestLastPrice
 }
 type GetMonitoringHandler struct {
-	monich chan<- RequestMonitor
+	reqch chan<- RequestMonitor
 }
 
 var gzipContentTypeList = []string{
@@ -163,18 +165,19 @@ func main() {
 	ctx, exitch := startExitManageProc(context.Background(), &wg)
 
 	for key, u := range zaifStremUrlList {
-		reqch := make(chan Request, 8)
+		reqch := make(chan RequestOldStream, 8)
 		sch := make(chan Stream, 8)
 		storesch := make(chan StoreData, 8)
-		osh := &OldStreamHandler{cp: key, reqch: reqch}
+		lpch := make(chan RequestLastPrice, 8)
 		wg.Add(1)
 		go streamReaderProc(ctx, &wg, u, sch)
 		wg.Add(1)
-		go streamStoreProc(ctx, &wg, key, sch, storesch, reqch)
+		go streamStoreProc(ctx, &wg, key, sch, storesch, reqch, lpch)
 		wg.Add(1)
 		go storeWriterProc(ctx, &wg, key, storesch)
 		// URL設定
-		http.Handle("/api/zaif/1/oldstream/"+key, osh)
+		http.Handle("/api/zaif/1/oldstream/"+key, &OldStreamHandler{cp: key, reqch: reqch})
+		http.Handle("/api/zaif/1/lastprice/"+key, &LastPriceHandler{reqch: lpch})
 	}
 
 	monich := make(chan RequestMonitor, 8)
@@ -184,7 +187,7 @@ func main() {
 	go serverMonitoringProc(ctx, &wg, rich, monich)
 
 	// URL設定
-	http.Handle("/api/unko.in/1/monitor", &GetMonitoringHandler{monich: monich})
+	http.Handle("/api/unko.in/1/monitor", &GetMonitoringHandler{reqch: monich})
 	http.Handle("/", http.FileServer(http.Dir("./public_html")))
 
 	ghfunc, err := gziphandler.GzipHandlerWithOpts(gziphandler.CompressionLevel(gzip.BestSpeed), gziphandler.ContentTypes(gzipContentTypeList))
@@ -361,7 +364,7 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss string, wsch 
 	}
 }
 
-func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <-chan Stream, wsch chan<- StoreData, reqch <-chan Request) {
+func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <-chan Stream, wsch chan<- StoreData, reqch <-chan RequestOldStream, lpch <-chan RequestLastPrice) {
 	defer wg.Done()
 	defer close(wsch)
 	oldstream := Stream{}
@@ -386,14 +389,28 @@ func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 			sl = appendStore(sl, s, oldstream, wsch, key)
 			oldstream = s
 		case it := <-reqch:
-			asl := sl
-			if it.filter != nil {
-				asl = it.filter(asl)
-			}
-			it.wch <- Result{
-				err: nil,
-				sl:  asl,
-			}
+			go func(it RequestOldStream, sl []StoreData) {
+				// シャットダウン管理はしない
+				lctx, lcancel := context.WithTimeout(ctx, time.Second*3)
+				defer lcancel()
+				if it.filter != nil {
+					sl = it.filter(sl)
+				}
+				select {
+				case <-lctx.Done():
+				case it.ch <- sl:
+				}
+			}(it, sl)
+		case it := <-lpch:
+			go func(it RequestLastPrice, lp LastPrice) {
+				// シャットダウン管理はしない
+				lctx, lcancel := context.WithTimeout(ctx, time.Second*3)
+				defer lcancel()
+				select {
+				case <-lctx.Done():
+				case it.ch <- lp:
+				}
+			}(it, oldstream.LastPrice)
 		}
 	}
 }
@@ -462,7 +479,7 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 }
 
 // サーバお手軽監視用
-func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan ResponseInfo, monich <-chan RequestMonitor) {
+func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan ResponseInfo, reqch <-chan RequestMonitor) {
 	defer wg.Done()
 	res := ResultMonitor{}
 	resmin := ResultMonitor{}
@@ -481,8 +498,16 @@ func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan R
 			} else {
 				res.ResponseCodeNgCount++
 			}
-		case m := <-monich:
-			m.wch <- resmin
+		case it := <-reqch:
+			go func(it RequestMonitor, resmin ResultMonitor) {
+				// シャットダウン管理はしない
+				lctx, lcancel := context.WithTimeout(ctx, time.Second*3)
+				defer lcancel()
+				select {
+				case <-lctx.Done():
+				case it.ch <- resmin:
+				}
+			}(it, resmin)
 		case <-tc.C:
 			if res.ResponseCount > 0 {
 				resmin = res
@@ -504,7 +529,7 @@ func NewStoreItem(date time.Time, name string) (*StoreItem, error) {
 	if err := createDir(p); err != nil {
 		return nil, err
 	}
-	err := si.fopen(p)
+	err := si.fileopen(p)
 	return si, err
 }
 
@@ -525,7 +550,7 @@ func (si *StoreItem) Close() error {
 	return si.store()
 }
 
-func (si *StoreItem) fopen(p string) error {
+func (si *StoreItem) fileopen(p string) error {
 	st, err := os.Stat(p)
 	if err != nil {
 		fp, err := os.Create(p)
@@ -552,7 +577,7 @@ func (si *StoreItem) reset(date time.Time) error {
 	si.Close()
 	si.date = date
 	p := si.createPathTmp()
-	return si.fopen(p)
+	return si.fileopen(p)
 }
 
 func (si *StoreItem) store() error {
@@ -688,18 +713,18 @@ func appendStore(sl []StoreData, s, olds Stream, wsch chan<- StoreData, name str
 	return sl
 }
 
-func (h *OldStreamHandler) getStoreData(ctx context.Context) ([]StoreData, error) {
-	ch := make(chan Result, 1)
+func (h *OldStreamHandler) getStoreData(ctx context.Context) (sdl []StoreData, err error) {
+	ch := make(chan []StoreData, 1)
 	tctx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer func() {
 		cancel()
 		close(ch)
 	}()
-	req := Request{
+	req := RequestOldStream{
 		filter: func(s []StoreData) []StoreData {
 			return s
 		},
-		wch: ch,
+		ch: ch,
 	}
 
 	select {
@@ -709,17 +734,13 @@ func (h *OldStreamHandler) getStoreData(ctx context.Context) ([]StoreData, error
 		// リクエスト送信
 	}
 
-	var it Result
 	select {
 	case <-tctx.Done():
-		return nil, errors.New("timeout")
-	case it = <-ch:
+		err = errors.New("timeout")
+	case sdl = <-ch:
 		// 結果の受信
 	}
-	if it.err != nil {
-		log.Warnw("ストリームデータの取得に失敗しました。", "error", it.err, "name", h.cp)
-	}
-	return it.sl, nil
+	return
 }
 
 func JSONEncoder(w io.Writer, sdl []StoreData) {
@@ -782,6 +803,42 @@ func (h *OldStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *LastPriceHandler) getLastPrice(ctx context.Context) (LastPrice, error) {
+	var res LastPrice
+	resch := make(chan LastPrice, 1)
+	cctx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer func() {
+		cancel()
+		close(resch)
+	}()
+	select {
+	case <-cctx.Done():
+		return res, errors.New("timeout")
+	case h.reqch <- RequestLastPrice{ch: resch}:
+		// リクエスト送信
+	}
+	select {
+	case <-cctx.Done():
+		return res, errors.New("timeout")
+	case res = <-resch:
+		// 結果の受信
+	}
+	return res, nil
+}
+
+func (h *LastPriceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	res, err := h.getLastPrice(r.Context())
+	if err == nil {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		err := json.NewEncoder(w).Encode(res)
+		if err != nil {
+			log.Warnw("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
+		}
+	} else {
+		http.Error(w, "データ取得に失敗しました。", http.StatusInternalServerError)
+	}
+}
+
 func (h *GetMonitoringHandler) getResultMonitor(ctx context.Context) (ResultMonitor, error) {
 	var res ResultMonitor
 	resch := make(chan ResultMonitor, 1)
@@ -793,7 +850,7 @@ func (h *GetMonitoringHandler) getResultMonitor(ctx context.Context) (ResultMoni
 	select {
 	case <-cctx.Done():
 		return res, errors.New("timeout")
-	case h.monich <- RequestMonitor{wch: resch}:
+	case h.reqch <- RequestMonitor{ch: resch}:
 		// リクエスト送信
 	}
 	select {
