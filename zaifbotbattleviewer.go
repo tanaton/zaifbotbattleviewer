@@ -169,7 +169,7 @@ var zaifStremUrlList = map[string]string{
 var log *zap.SugaredLogger
 
 func init() {
-	logger, err := zap.NewProduction()
+	logger, err := zap.NewDevelopment()
 	if err != nil {
 		panic(err)
 	}
@@ -510,14 +510,15 @@ func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan R
 		}),
 		zap.InfoLevel,
 	))
+	defer logger.Sync()
 	res := ResultMonitor{}
 	resmin := ResultMonitor{}
 	tc := time.NewTicker(time.Minute)
+	defer tc.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			log.Infow("serverMonitoringProc終了")
-			tc.Stop()
 			return
 		case monich <- resmin:
 		case ri := <-rich:
@@ -530,20 +531,19 @@ func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan R
 			}
 			// アクセスログ出力
 			logger.Info("-",
-				zap.Int("status", ri.status),
-				zap.String("uri", ri.uri),
-				zap.String("host", ri.host),
-				zap.String("protocol", ri.protocol),
-				zap.String("method", ri.method),
 				zap.String("addr", ri.addr),
-				zap.String("ua", ri.userAgent),
+				zap.String("host", ri.host),
+				zap.String("method", ri.method),
+				zap.String("uri", ri.uri),
+				zap.String("protocol", ri.protocol),
+				zap.Int("status", ri.status),
 				zap.Int("size", ri.size),
+				zap.String("ua", ri.userAgent),
 				zap.Duration("elapse", ri.end.Sub(ri.start)),
 			)
 		case <-tc.C:
 			resmin = res
 			res = ResultMonitor{}
-			logger.Sync() // 定期的に書き出し
 		}
 	}
 }
