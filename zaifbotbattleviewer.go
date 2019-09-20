@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/ioutil"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,11 +25,14 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/tanaton/dtoa"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/crypto/acme/autocert"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 const (
-	StoreDataMax = 1 << 14 // 16384
+	StoreDataMax  = 1 << 14 // 16384
+	AccessLogPath = "./log"
 )
 
 type PriceAmount [2]float64
@@ -127,6 +131,27 @@ type GetMonitoringHandler struct {
 	ch <-chan ResultMonitor
 }
 
+type ResponseInfo struct {
+	uri       string
+	userAgent string
+	status    int
+	size      int
+	start     time.Time
+	end       time.Time
+	method    string
+	host      string
+	protocol  string
+	addr      string
+}
+type MonitoringResponseWriter struct {
+	http.ResponseWriter
+	ri   ResponseInfo
+	rich chan<- ResponseInfo
+}
+type MonitoringResponseWriterWithCloseNotify struct {
+	*MonitoringResponseWriter
+}
+
 var gzipContentTypeList = []string{
 	"text/html",
 	"text/css",
@@ -158,9 +183,9 @@ func main() {
 
 	for key, u := range zaifStremUrlList {
 		sdch := make(chan StoreDataArray)
+		lpch := make(chan LastPrice)
 		sch := make(chan Stream, 8)
 		storesch := make(chan StoreData, 32)
-		lpch := make(chan LastPrice)
 		wg.Add(1)
 		go streamReaderProc(ctx, &wg, u, sch)
 		wg.Add(1)
@@ -213,9 +238,14 @@ func main() {
 // MonitoringHandler モニタリング用ハンドラ生成
 func MonitoringHandler(h http.Handler, rich chan<- ResponseInfo) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		bbrw := NewMonitoringResponseWriter(w, r, rich)
-		h.ServeHTTP(bbrw, r)
-		bbrw.Finish()
+		mrw := NewMonitoringResponseWriter(w, r, rich)
+		if _, ok := w.(http.CloseNotifier); ok {
+			mrwcn := MonitoringResponseWriterWithCloseNotify{mrw}
+			h.ServeHTTP(mrwcn, r)
+		} else {
+			h.ServeHTTP(mrw, r)
+		}
+		mrw.Close()
 	})
 }
 
@@ -467,6 +497,19 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 // サーバお手軽監視用
 func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan ResponseInfo, monich chan<- ResultMonitor) {
 	defer wg.Done()
+	// logrotateの設定がめんどくせーのでアプリでやる
+	// https://github.com/uber-go/zap/blob/master/FAQ.md
+	logger := zap.New(zapcore.NewCore(
+		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
+		zapcore.AddSync(&lumberjack.Logger{
+			Filename:   filepath.Join(AccessLogPath, "access.log"),
+			MaxSize:    100, // megabytes
+			MaxBackups: 100,
+			MaxAge:     7,    // days
+			Compress:   true, // disabled by default
+		}),
+		zap.InfoLevel,
+	))
 	res := ResultMonitor{}
 	resmin := ResultMonitor{}
 	tc := time.NewTicker(time.Minute)
@@ -476,22 +519,31 @@ func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan R
 			log.Infow("serverMonitoringProc終了")
 			tc.Stop()
 			return
+		case monich <- resmin:
 		case ri := <-rich:
 			res.ResponseCount++
 			res.ResponseTimeSum += ri.end.Sub(ri.start)
-			if ri.code < 400 {
+			if ri.status < 400 {
 				res.ResponseCodeOkCount++
 			} else {
 				res.ResponseCodeNgCount++
 			}
-		case monich <- resmin:
+			// アクセスログ出力
+			logger.Info("-",
+				zap.Int("status", ri.status),
+				zap.String("uri", ri.uri),
+				zap.String("host", ri.host),
+				zap.String("protocol", ri.protocol),
+				zap.String("method", ri.method),
+				zap.String("addr", ri.addr),
+				zap.String("ua", ri.userAgent),
+				zap.Int("size", ri.size),
+				zap.Duration("elapse", ri.end.Sub(ri.start)),
+			)
 		case <-tc.C:
-			if res.ResponseCount > 0 {
-				resmin = res
-			} else {
-				resmin = ResultMonitor{}
-			}
+			resmin = res
 			res = ResultMonitor{}
+			logger.Sync() // 定期的に書き出し
 		}
 	}
 }
@@ -609,46 +661,82 @@ func createBufferFilePath(name string) string {
 	return filepath.Join("data", fmt.Sprintf("%s_buffer.gob", name))
 }
 
-type ResponseInfo struct {
-	path      string
-	userAgent string
-	code      int
-	size      int
-	start     time.Time
-	end       time.Time
-}
-type MonitoringResponseWriter struct {
-	w    http.ResponseWriter
-	ri   ResponseInfo
-	rich chan<- ResponseInfo
-}
-
 func NewMonitoringResponseWriter(w http.ResponseWriter, r *http.Request, rich chan<- ResponseInfo) *MonitoringResponseWriter {
 	return &MonitoringResponseWriter{
-		w: w,
+		ResponseWriter: w,
 		ri: ResponseInfo{
-			path:      r.URL.Path,
+			uri:       r.RequestURI,
 			userAgent: r.UserAgent(),
-			start:     time.Now(),
+			start:     time.Now().UTC(),
+			method:    r.Method,
+			protocol:  r.Proto,
+			host:      r.Host,
+			addr:      r.RemoteAddr,
 		},
 		rich: rich,
 	}
 }
-func (bbrw *MonitoringResponseWriter) Header() http.Header {
-	return bbrw.w.Header()
-}
-func (bbrw *MonitoringResponseWriter) Write(buf []byte) (int, error) {
-	s, err := bbrw.w.Write(buf)
-	bbrw.ri.size += s
+
+// Writeメソッドをオーバーライド
+func (mrw *MonitoringResponseWriter) Write(buf []byte) (int, error) {
+	if mrw.ri.status == 0 {
+		mrw.ri.status = http.StatusOK
+	}
+	s, err := mrw.ResponseWriter.Write(buf)
+	mrw.ri.size += s
 	return s, err
 }
-func (bbrw *MonitoringResponseWriter) WriteHeader(statusCode int) {
-	bbrw.ri.code = statusCode
-	bbrw.w.WriteHeader(statusCode)
+
+// WriteHeaderメソッドをオーバーライド
+func (mrw *MonitoringResponseWriter) WriteHeader(statusCode int) {
+	mrw.ri.status = statusCode
+	mrw.ResponseWriter.WriteHeader(statusCode)
 }
-func (bbrw *MonitoringResponseWriter) Finish() {
-	bbrw.ri.end = time.Now()
-	bbrw.rich <- bbrw.ri
+
+// Close io.Closerのような感じにしたけど特に意味は無い
+func (mrw *MonitoringResponseWriter) Close() error {
+	mrw.ri.end = time.Now().UTC()
+	mrw.rich <- mrw.ri
+	return nil
+}
+
+// インターフェイスのチェック
+var _ http.ResponseWriter = &MonitoringResponseWriter{}
+var _ http.CloseNotifier = &MonitoringResponseWriterWithCloseNotify{}
+var _ http.Hijacker = &MonitoringResponseWriter{}
+var _ http.Flusher = &MonitoringResponseWriter{}
+var _ http.Pusher = &MonitoringResponseWriter{}
+
+// CloseNotify http.CloseNotifier interface
+func (mrw *MonitoringResponseWriterWithCloseNotify) CloseNotify() <-chan bool {
+	return mrw.ResponseWriter.(http.CloseNotifier).CloseNotify()
+}
+
+// Hijack implements http.Hijacker. If the underlying ResponseWriter is a
+// Hijacker, its Hijack method is returned. Otherwise an error is returned.
+func (mrw *MonitoringResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := mrw.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, fmt.Errorf("http.Hijacker interface is not supported")
+}
+
+// Flush http.Flusher interface
+func (mrw *MonitoringResponseWriter) Flush() {
+	flusher, ok := mrw.ResponseWriter.(http.Flusher)
+	if ok {
+		flusher.Flush()
+	}
+}
+
+// Push http.Pusher interface
+// go1.8以上が必要
+func (mrw *MonitoringResponseWriter) Push(target string, opts *http.PushOptions) error {
+	pusher, ok := mrw.ResponseWriter.(http.Pusher)
+	if ok && pusher != nil {
+		return pusher.Push(target, opts)
+	}
+	return http.ErrNotSupported
 }
 
 var storeDataArrayPool = sync.Pool{
