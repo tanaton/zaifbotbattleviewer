@@ -166,6 +166,11 @@ var zaifStremUrlList = map[string]string{
 	"bch_jpy":  "wss://ws.zaif.jp/stream?currency_pair=bch_jpy",
 	"eth_jpy":  "wss://ws.zaif.jp/stream?currency_pair=eth_jpy",
 }
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 0, 32*1024)
+	},
+}
 var log *zap.SugaredLogger
 
 func init() {
@@ -334,10 +339,8 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss string, wsch 
 		exit := func() (exit bool) {
 			ch := make(chan error, 1)
 			dialctx, dialcancel := context.WithTimeout(ctx, time.Second*7)
-			defer func() {
-				dialcancel()
-				close(ch)
-			}()
+			defer dialcancel()
+			defer close(ch)
 			con, _, dialerr := websocket.DefaultDialer.DialContext(dialctx, wss, nil)
 			if dialerr != nil {
 				// Dialが失敗した理由がよくわからない
@@ -381,7 +384,7 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss string, wsch 
 		}
 		if wait < 180*time.Second {
 			wait *= 2
-			wait += time.Duration(rand.Uint64() % 5000)
+			wait += time.Duration(rand.Uint64()%5000) * time.Millisecond
 		}
 	}
 }
@@ -522,8 +525,9 @@ func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan R
 			return
 		case monich <- resmin:
 		case ri := <-rich:
+			ela := ri.end.Sub(ri.start)
 			res.ResponseCount++
-			res.ResponseTimeSum += ri.end.Sub(ri.start)
+			res.ResponseTimeSum += ela
 			if ri.status < 400 {
 				res.ResponseCodeOkCount++
 			} else {
@@ -539,7 +543,7 @@ func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan R
 				zap.Int("status", ri.status),
 				zap.Int("size", ri.size),
 				zap.String("ua", ri.userAgent),
-				zap.Duration("elapse", ri.end.Sub(ri.start)),
+				zap.Duration("elapse", ela),
 			)
 		case <-tc.C:
 			resmin = res
@@ -628,8 +632,7 @@ func (si *StoreItem) store() error {
 	defer wfp.Close()
 	gz, _ := gzip.NewWriterLevel(wfp, gzip.BestSpeed)
 	defer gz.Close()
-	r := bufio.NewReaderSize(rfp, 128*1024)
-	_, err = io.Copy(gz, r)
+	_, err = io.Copy(gz, rfp)
 	return err
 }
 
@@ -748,9 +751,9 @@ var storeDataArrayPool = sync.Pool{
 func NewStoreDataArray() StoreDataArray {
 	return storeDataArrayPool.Get().(StoreDataArray)
 }
-func (sda *StoreDataArray) Duplicate() StoreDataArray {
+func (sda StoreDataArray) Duplicate() StoreDataArray {
 	sda2 := NewStoreDataArray()
-	sda2 = append(sda2, (*sda)...)
+	sda2 = append(sda2, sda...)
 	return sda2
 }
 func (sda *StoreDataArray) Push(sd StoreData) {
@@ -852,7 +855,7 @@ func StoreDataToJSON(buf []byte, sd StoreData) []byte {
 }
 
 func StoreDataArrayToJSON(w io.Writer, sda StoreDataArray) {
-	buf := make([]byte, 0, 32*1024)
+	buf := bufferPool.Get().([]byte)
 	buf = append(buf, '[')
 	for i, sd := range sda {
 		if i > 0 {
@@ -866,6 +869,7 @@ func StoreDataArrayToJSON(w io.Writer, sda StoreDataArray) {
 	}
 	buf = append(buf, ']')
 	w.Write(buf)
+	bufferPool.Put(buf[:0])
 }
 
 func (h *OldStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
