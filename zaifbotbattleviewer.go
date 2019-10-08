@@ -254,7 +254,7 @@ func MonitoringHandler(h http.Handler, rich chan<- ResponseInfo) http.Handler {
 	})
 }
 
-func (srv *Srv) startServer(wg *sync.WaitGroup) {
+func (srv Srv) startServer(wg *sync.WaitGroup) {
 	defer wg.Done()
 	log.Infow("Srv.startServer", "Addr", srv.s.Addr)
 	// サーバ起動
