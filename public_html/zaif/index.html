@@ -1,199 +1,226 @@
 <!DOCTYPE html>
 <html lang="ja">
-	<head>
-		<meta charset="utf-8">
-		<meta http-equiv="X-UA-Compatible" content="IE=edge">
-		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<title>zaifの取引情報を表示するやつ</title>
-		<link rel="stylesheet" href="/css/bootstrap.css">
-		<style>
-body {
-	font: sans-serif;
-	min-height: 75rem;
-	padding-top: 4.5rem;
-}
-#last-trade {
-	font-size: 24pt;
-}
-.axis path,
-.axis line {
-	fill: none;
-	stroke: #000;
-	shape-rendering: crispEdges;
-}
-.x.axis path {
-/*	display: none;	*/
-}
-.x.axis line, .y.axis line {
-	opacity: 0.15;
-}
-.line {
-	fill: none;
-	stroke: steelblue;
-	stroke-width: 1.5px;
-}
-.ask {
-	color: #b94047;
-}
-.bid {
-	color: #47ba41;
-}
-.table-hover tbody tr:hover.trade > td.ask {
-	background-color: #ffe6e6;
-}
-.table-hover tbody tr:hover.trade > td.bid {
-	background-color: #e6ffe6;
-}
-.table-hover tbody tr:hover.board-ask > td {
-	background-color: #ffe6e6;
-}
-.table-hover tbody tr:hover.board-bid > td {
-	background-color: #e6ffe6;
-}
-.trades-leave-active,
-.trades-enter-active {
-    transition: opacity 5s;
-}
-.trades-leave-to,
-.trades-enter {
-    opacity: 0;
-}
-.trades-leave,
-.trades-enter-to {
-    opacity: 1;
-}
-.trades-move {
-    transition: transform 5s;
-}
-[v-cloak] {
-	display: none;
-}
-		</style>
-	</head>
-	<body class="bg-light text-dark">
-		<div id="container">
-			<nav class="navbar fixed-top navbar-expand-lg navbar-light bg-light text-dark">
-				<span class="navbar-brand" v-cloak>zaifの取引情報を表示するやつ ({{ currency_pair.first }}/{{ currency_pair.second }})</span>
-				<div class="collapse navbar-collapse" id="navbarText">
-					<ul class="navbar-nav mr-auto">
-						<li class="nav-item active">
-							<span class="navbar-brand"><span :class="last_trade.type" v-cloak>{{ last_trade.price }} {{ last_trade.action }}</span></span>
-						</li>
-						<li class="nav-item">
-							<a class="navbar-brand nav-link" href="/">（私の）暗号通貨資産の様子</a>
-						</li>
-						<li v-for="currency in currencys" class="nav-item" :class="currency.active">
-							<a class="navbar-brand nav-link" :href="currency.hash" v-cloak>{{ currency.name }}</a>
-						</li>
-					</ul>
-					<span class="navbar-text">
-						このページは非公式です。
-					</span>
-				</div>
-			</nav>
-			<main class="container" role="main">
-				<div class="row justify-content-center">
-					<div class="col-xl-9">
-						<div class="row">
-							<div class="col-4">
-								<h2>取引の様子</h2>
-							</div>
-							<div class="col-4">
-								<div class="form-group row justify-content-end" v-cloak>
-									<label for="staticFocusFps" class="col-sm-4 col-form-label">更新間隔</label>
-									<select class="form-control col-sm-4" v-model="focus.fps.selected">
-										<option v-for="option in focus.fps.options" v-bind:value="option.value">
-											{{ option.text }}
-										</option>
-									</select>
-								</div>
-							</div>
-							<div class="col-4">
-								<div class="form-group row justify-content-end" v-cloak>
-									<label for="staticFocusTime" class="col-sm-4 col-form-label">表示時間</label>
-									<select class="form-control col-sm-4" v-model="focus.xaxis.selected">
-										<option v-for="option in focus.xaxis.options" v-bind:value="option.value">
-											{{ option.text }}
-										</option>
-									</select>
-								</div>
-							</div>
-						</div>
-						<div id="svgarea"></div>
-					</div>
-					<div class="col-xl-3">
-						<span v-cloak>1{{ currency_pair.first }}の現在価格 ({{ currency_pair.second }})</span>
-						<p>
-							<span id="last-trade" :class="last_trade.type" v-cloak>{{ last_trade.price }} {{ last_trade.action }}</span>
-						</p>
-						<div class="table-responsive">
-							<table class="table table-sm table-striped table-hover" v-cloak>
-								<thead>
-									<tr>
-										<th colspan="4">最近の取引 ({{ currency_pair.first }}/{{ currency_pair.second }})</th>
-									</tr>
-								</thead>
-								<transition-group name="trades" tag="tbody">
-									<tr v-for="trade in trades" v-bind:key="trade.tid" class="trade">
-										<td :class="trade.trade_type" class="font-weight-bold">{{ trade.direction }}</td>
-										<td :class="trade.trade_type" class="font-weight-bold">{{ trade.price }}</td>
-										<td :class="trade.trade_type">{{ trade.amount }}</td>
-										<td :class="trade.trade_type">{{ trade.date }}</td>
-									</tr>
-								</transition-group>
-							</table>
-						</div>
-						<span v-cloak>グラフ軸との時間差：{{ date_diff }}秒</span>
-					</div>
-				</div>
-				<div class="row justify-content-center">
-					<div class="col-xl-6">
-						<h2>Bid</h2>
-						<div class="table-responsive">
-							<table class="table table-sm table-striped table-hover" v-cloak>
-								<thead>
-									<tr>
-										<th>価格 ({{ currency_pair.second }})</th>
-										<th>通貨 ({{ currency_pair.first }})</th>
-										<th>合計 ({{ currency_pair.second }})</th>
-									</tr>
-								</thead>
-								<tbody>
-									<tr v-for="bid in bids" class="board-bid">
-										<td class="bid">{{ bid.price }}</td>
-										<td>{{ bid.amount }}</td>
-										<td>{{ bid.depth }}</td>
-									</tr>
-								</tbody>
-							</table>
-						</div>
-					</div>
-					<div class="col-xl-6">
-						<h2>Ask</h2>
-						<div class="table-responsive">
-							<table class="table table-sm table-striped table-hover" v-cloak>
-								<thead>
-									<tr>
-										<th>価格 ({{ currency_pair.second }})</th>
-										<th>通貨 ({{ currency_pair.first }})</th>
-										<th>合計 ({{ currency_pair.second }})</th>
-									</tr>
-								</thead>
-								<tbody>
-									<tr v-for="ask in asks" class="board-ask">
-										<td class="ask">{{ ask.price }}</td>
-										<td>{{ ask.amount }}</td>
-										<td>{{ ask.depth }}</td>
-									</tr>
-								</tbody>
-							</table>
-						</div>
-					</div>
-				</div>
-			</main>
-		</div>
-		<script src="/js/lib/jquery-3.4.1.min.js"></script>
-		<script src="/js/lib/bootstrap.js"></script>
-		<script src="/js/realtimegraph.js"></script>
-	</body>
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>zaifの取引情報を表示するやつ</title>
+    <link rel="stylesheet" href="/css/bootstrap.css">
+    <style>
+        body {
+            font: sans-serif;
+            min-height: 75rem;
+            padding-top: 4.5rem;
+        }
+
+        #last-trade {
+            font-size: 24pt;
+        }
+
+        .axis path,
+        .axis line {
+            fill: none;
+            stroke: #000;
+            shape-rendering: crispEdges;
+        }
+
+        .x.axis path {
+            /*	display: none;	*/
+        }
+
+        .x.axis line,
+        .y.axis line {
+            opacity: 0.15;
+        }
+
+        .line {
+            fill: none;
+            stroke: steelblue;
+            stroke-width: 1.5px;
+        }
+
+        .ask {
+            color: #b94047;
+        }
+
+        .bid {
+            color: #47ba41;
+        }
+
+        .table-hover tbody tr:hover.trade>td.ask {
+            background-color: #ffe6e6;
+        }
+
+        .table-hover tbody tr:hover.trade>td.bid {
+            background-color: #e6ffe6;
+        }
+
+        .table-hover tbody tr:hover.board-ask>td {
+            background-color: #ffe6e6;
+        }
+
+        .table-hover tbody tr:hover.board-bid>td {
+            background-color: #e6ffe6;
+        }
+
+        .trades-leave-active,
+        .trades-enter-active {
+            transition: opacity 5s;
+        }
+
+        .trades-leave-to,
+        .trades-enter {
+            opacity: 0;
+        }
+
+        .trades-leave,
+        .trades-enter-to {
+            opacity: 1;
+        }
+
+        .trades-move {
+            transition: transform 5s;
+        }
+
+        [v-cloak] {
+            display: none;
+        }
+    </style>
+</head>
+
+<body class="bg-light text-dark">
+    <div id="container">
+        <nav class="navbar fixed-top navbar-expand-lg navbar-light bg-light text-dark">
+            <span class="navbar-brand" v-cloak>
+                zaifの取引情報を表示するやつ ({{ currency_pair.first }}/{{ currency_pair.second }})
+            </span>
+            <div class="collapse navbar-collapse" id="navbarText">
+                <ul class="navbar-nav mr-auto">
+                    <li class="nav-item active">
+                        <span class="navbar-brand">
+                            <span :class="last_trade.type" v-cloak>
+                                {{ last_trade.price }} {{ last_trade.action }}
+                            </span>
+                        </span>
+                    </li>
+                    <li class="nav-item">
+                        <a class="navbar-brand nav-link" href="/">（私の）暗号通貨資産の様子</a>
+                    </li>
+                    <li v-for="currency in currencys" class="nav-item" :class="currency.active">
+                        <a class="navbar-brand nav-link" :href="currency.hash" v-cloak>{{ currency.name }}</a>
+                    </li>
+                </ul>
+                <span class="navbar-text">
+                    このページは非公式です。
+                </span>
+            </div>
+        </nav>
+        <main class="container" role="main">
+            <div class="row justify-content-center">
+                <div class="col-xl-9">
+                    <div class="row">
+                        <div class="col-4">
+                            <h2>取引の様子</h2>
+                        </div>
+                        <div class="col-4">
+                            <div class="form-group row justify-content-end" v-cloak>
+                                <label for="staticFocusFps" class="col-sm-4 col-form-label">更新間隔</label>
+                                <select class="form-control col-sm-4" v-model="focus.fps.selected">
+                                    <option v-for="option in focus.fps.options" v-bind:value="option.value">
+                                        {{ option.text }}
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="form-group row justify-content-end" v-cloak>
+                                <label for="staticFocusTime" class="col-sm-4 col-form-label">表示時間</label>
+                                <select class="form-control col-sm-4" v-model="focus.xaxis.selected">
+                                    <option v-for="option in focus.xaxis.options" v-bind:value="option.value">
+                                        {{ option.text }}
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="svgarea"></div>
+                </div>
+                <div class="col-xl-3">
+                    <span v-cloak>1{{ currency_pair.first }}の現在価格 ({{ currency_pair.second }})</span>
+                    <p>
+                        <span id="last-trade" :class="last_trade.type" v-cloak>{{ last_trade.price }}
+                            {{ last_trade.action }}</span>
+                    </p>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped table-hover" v-cloak>
+                            <thead>
+                                <tr>
+                                    <th colspan="4">最近の取引 ({{ currency_pair.first }}/{{ currency_pair.second }})</th>
+                                </tr>
+                            </thead>
+                            <transition-group name="trades" tag="tbody">
+                                <tr v-for="trade in trades" v-bind:key="trade.tid" class="trade">
+                                    <td :class="trade.trade_type" class="font-weight-bold">{{ trade.direction }}</td>
+                                    <td :class="trade.trade_type" class="font-weight-bold">{{ trade.price }}</td>
+                                    <td :class="trade.trade_type">{{ trade.amount }}</td>
+                                    <td :class="trade.trade_type">{{ trade.date }}</td>
+                                </tr>
+                            </transition-group>
+                        </table>
+                    </div>
+                    <span v-cloak>グラフ軸との時間差：{{ date_diff }}秒</span>
+                </div>
+            </div>
+            <div class="row justify-content-center">
+                <div class="col-xl-6">
+                    <h2>Bid</h2>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped table-hover" v-cloak>
+                            <thead>
+                                <tr>
+                                    <th>価格 ({{ currency_pair.second }})</th>
+                                    <th>通貨 ({{ currency_pair.first }})</th>
+                                    <th>合計 ({{ currency_pair.second }})</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="bid in bids" class="board-bid">
+                                    <td class="bid">{{ bid.price }}</td>
+                                    <td>{{ bid.amount }}</td>
+                                    <td>{{ bid.depth }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="col-xl-6">
+                    <h2>Ask</h2>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped table-hover" v-cloak>
+                            <thead>
+                                <tr>
+                                    <th>価格 ({{ currency_pair.second }})</th>
+                                    <th>通貨 ({{ currency_pair.first }})</th>
+                                    <th>合計 ({{ currency_pair.second }})</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="ask in asks" class="board-ask">
+                                    <td class="ask">{{ ask.price }}</td>
+                                    <td>{{ ask.amount }}</td>
+                                    <td>{{ ask.depth }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="/js/lib/jquery-3.4.1.min.js"></script>
+    <script src="/js/lib/bootstrap.js"></script>
+    <script src="/js/realtimegraph.js"></script>
+</body>
+
 </html>

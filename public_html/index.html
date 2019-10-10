@@ -1,102 +1,128 @@
 <!DOCTYPE html>
 <html lang="ja">
-	<head>
-		<meta charset="utf-8">
-		<meta http-equiv="X-UA-Compatible" content="IE=edge">
-		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<title>（私の）暗号通貨資産の様子</title>
-		<link rel="stylesheet" href="/css/bootstrap.css">
-		<style>
-body {
-	font: sans-serif;
-	min-height: 75rem;
-	padding-top: 4.5rem;
-}
-#last-trade {
-	font-size: 24pt;
-}
-.axis path,
-.axis line {
-	fill: none;
-	stroke: #000;
-	shape-rendering: crispEdges;
-}
-.x.axis path {
-/*	display: none;	*/
-}
-.x.axis line, .y.axis line {
-	opacity: 0.15;
-}
-.line {
-	fill: none;
-	stroke: steelblue;
-	stroke-width: 1.5px;
-}
-.ask {
-	color: #b94047;
-}
-.bid {
-	color: #47ba41;
-}
-.table-hover tbody tr:hover.trade > td.ask {
-	background-color: #ffe6e6;
-}
-.table-hover tbody tr:hover.trade > td.bid {
-	background-color: #e6ffe6;
-}
-.table-hover tbody tr:hover.board-ask > td {
-	background-color: #ffe6e6;
-}
-.table-hover tbody tr:hover.board-bid > td {
-	background-color: #e6ffe6;
-}
-.trades-leave-active,
-.trades-enter-active {
-    transition: opacity 5s;
-}
-.trades-leave-to,
-.trades-enter {
-    opacity: 0;
-}
-.trades-leave,
-.trades-enter-to {
-    opacity: 1;
-}
-.trades-move {
-    transition: transform 5s;
-}
-[v-cloak] {
-	display: none;
-}
-		</style>
-	</head>
-	<body class="bg-light text-dark">
-		<div id="container">
-			<nav class="navbar fixed-top navbar-expand-lg navbar-light bg-light text-dark">
-				<span class="navbar-brand" v-cloak>（私の）暗号通貨資産の様子</span>
-				<div class="collapse navbar-collapse" id="navbarText">
-					<ul class="navbar-nav mr-auto">
-						<li class="nav-item active">
-							<span class="navbar-brand"><span :class="last_trade.type" v-cloak>{{ asset_now }} {{ last_trade.action }}</span></span>
-						</li>
-						<li class="nav-item">
-							<a class="navbar-brand nav-link" href="/zaif/">zaifの取引情報を表示するやつ</a>
-						</li>
-					</ul>
-					<span class="navbar-text">
-						このページは非公式です。
-					</span>
-				</div>
-			</nav>
-			<main class="container" role="main">
-				<span v-cloak>現在資産</span>
-				<p>
-					<span id="last-trade" :class="last_trade.type" v-cloak>{{ asset_now }} ({{ asset_per }}%) {{ last_trade.action }}</span>
-				</p>
-			</main>
-		</div>
-		<script src="/js/lib/jquery-3.4.1.min.js"></script>
-		<script src="/js/lib/bootstrap.js"></script>
-		<script src="/js/myasset.js"></script>
-	</body>
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>（私の）暗号通貨資産の様子</title>
+    <link rel="stylesheet" href="/css/bootstrap.css">
+    <style>
+        body {
+            font: sans-serif;
+            min-height: 75rem;
+            padding-top: 4.5rem;
+        }
+
+        #last-trade {
+            font-size: 24pt;
+        }
+
+        .axis path,
+        .axis line {
+            fill: none;
+            stroke: #000;
+            shape-rendering: crispEdges;
+        }
+
+        .x.axis path {
+            /*	display: none;	*/
+        }
+
+        .x.axis line,
+        .y.axis line {
+            opacity: 0.15;
+        }
+
+        .line {
+            fill: none;
+            stroke: steelblue;
+            stroke-width: 1.5px;
+        }
+
+        .ask {
+            color: #b94047;
+        }
+
+        .bid {
+            color: #47ba41;
+        }
+
+        .table-hover tbody tr:hover.trade>td.ask {
+            background-color: #ffe6e6;
+        }
+
+        .table-hover tbody tr:hover.trade>td.bid {
+            background-color: #e6ffe6;
+        }
+
+        .table-hover tbody tr:hover.board-ask>td {
+            background-color: #ffe6e6;
+        }
+
+        .table-hover tbody tr:hover.board-bid>td {
+            background-color: #e6ffe6;
+        }
+
+        .trades-leave-active,
+        .trades-enter-active {
+            transition: opacity 5s;
+        }
+
+        .trades-leave-to,
+        .trades-enter {
+            opacity: 0;
+        }
+
+        .trades-leave,
+        .trades-enter-to {
+            opacity: 1;
+        }
+
+        .trades-move {
+            transition: transform 5s;
+        }
+
+        [v-cloak] {
+            display: none;
+        }
+    </style>
+</head>
+
+<body class="bg-light text-dark">
+    <div id="container">
+        <nav class="navbar fixed-top navbar-expand-lg navbar-light bg-light text-dark">
+            <span class="navbar-brand" v-cloak>（私の）暗号通貨資産の様子</span>
+            <div class="collapse navbar-collapse" id="navbarText">
+                <ul class="navbar-nav mr-auto">
+                    <li class="nav-item active">
+                        <span class="navbar-brand">
+                            <span :class="last_trade.type" v-cloak>
+                                {{ asset_now }} {{ last_trade.action }}
+                            </span>
+                        </span>
+                    </li>
+                    <li class="nav-item">
+                        <a class="navbar-brand nav-link" href="/zaif/">zaifの取引情報を表示するやつ</a>
+                    </li>
+                </ul>
+                <span class="navbar-text">
+                    このページは非公式です。
+                </span>
+            </div>
+        </nav>
+        <main class="container" role="main">
+            <span v-cloak>現在資産</span>
+            <p>
+                <span id="last-trade" :class="last_trade.type" v-cloak>
+                    {{ asset_now }} ({{ asset_per }}%) {{ last_trade.action }}
+                </span>
+            </p>
+        </main>
+    </div>
+    <script src="/js/lib/jquery-3.4.1.min.js"></script>
+    <script src="/js/lib/bootstrap.js"></script>
+    <script src="/js/myasset.js"></script>
+</body>
+
 </html>
