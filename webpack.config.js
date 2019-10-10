@@ -3,8 +3,9 @@ module.exports = {
 	//mode: 'development', 
 	mode: 'production',
 	entry: {
-		bundle: './ts/realtimegraph.ts'
-	},  
+		realtimegraph: './ts/realtimegraph.ts',
+		myasset: './ts/myasset.ts'
+	},
 	output: {
 		path: path.join(__dirname,'public_html/js'),
 		filename: '[name].js'

@@ -1154,11 +1154,11 @@ const dispdata: Display = {
 	},
 	date_diff: 0,
 	currencys: {
-		btc_jpy: {name: "btc/jpy", hash: "#btc_jpy", active: ""},
-		xem_jpy: {name: "xem/jpy", hash: "#xem_jpy", active: ""},
-		mona_jpy: {name: "mona/jpy", hash: "#mona_jpy", active: ""},
-		bch_jpy: {name: "bch/jpy", hash: "#bch_jpy", active: ""},
-		eth_jpy: {name: "eth/jpy", hash: "#eth_jpy", active: ""}
+		btc_jpy: {name: "btc/jpy", hash: "/zaif/#btc_jpy", active: ""},
+		xem_jpy: {name: "xem/jpy", hash: "/zaif/#xem_jpy", active: ""},
+		mona_jpy: {name: "mona/jpy", hash: "/zaif/#mona_jpy", active: ""},
+		bch_jpy: {name: "bch/jpy", hash: "/zaif/#bch_jpy", active: ""},
+		eth_jpy: {name: "eth/jpy", hash: "/zaif/#eth_jpy", active: ""}
 	}
 };
 const vm = new Vue({
