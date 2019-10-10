@@ -79,6 +79,9 @@ body {
 						<li class="nav-item active">
 							<span class="navbar-brand"><span :class="last_trade.type" v-cloak>{{ last_trade.price }} {{ last_trade.action }}</span></span>
 						</li>
+						<li class="nav-item">
+							<a class="navbar-brand nav-link" href="/">（私の）暗号通貨資産の様子</a>
+						</li>
 						<li v-for="currency in currencys" class="nav-item" :class="currency.active">
 							<a class="navbar-brand nav-link" :href="currency.hash" v-cloak>{{ currency.name }}</a>
 						</li>
@@ -100,7 +103,7 @@ body {
 									<label for="staticFocusFps" class="col-sm-4 col-form-label">更新間隔</label>
 									<select class="form-control col-sm-4" v-model="focus.fps.selected">
 										<option v-for="option in focus.fps.options" v-bind:value="option.value">
-										{{ option.text }}
+											{{ option.text }}
 										</option>
 									</select>
 								</div>
@@ -110,7 +113,7 @@ body {
 									<label for="staticFocusTime" class="col-sm-4 col-form-label">表示時間</label>
 									<select class="form-control col-sm-4" v-model="focus.xaxis.selected">
 										<option v-for="option in focus.xaxis.options" v-bind:value="option.value">
-										{{ option.text }}
+											{{ option.text }}
 										</option>
 									</select>
 								</div>

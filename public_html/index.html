@@ -4,7 +4,7 @@
 		<meta charset="utf-8">
 		<meta http-equiv="X-UA-Compatible" content="IE=edge">
 		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<title>資産（？）の様子</title>
+		<title>（私の）暗号通貨資産の様子</title>
 		<link rel="stylesheet" href="/css/bootstrap.css">
 		<style>
 body {
@@ -73,14 +73,14 @@ body {
 	<body class="bg-light text-dark">
 		<div id="container">
 			<nav class="navbar fixed-top navbar-expand-lg navbar-light bg-light text-dark">
-				<span class="navbar-brand" v-cloak>資産（？）の様子</span>
+				<span class="navbar-brand" v-cloak>（私の）暗号通貨資産の様子</span>
 				<div class="collapse navbar-collapse" id="navbarText">
 					<ul class="navbar-nav mr-auto">
 						<li class="nav-item active">
 							<span class="navbar-brand"><span :class="last_trade.type" v-cloak>{{ asset_now }} {{ last_trade.action }}</span></span>
 						</li>
-						<li v-for="currency in currencys" class="nav-item" :class="currency.active">
-							<a class="navbar-brand nav-link" :href="currency.hash" v-cloak>{{ currency.name }}</a>
+						<li class="nav-item">
+							<a class="navbar-brand nav-link" href="/zaif/">zaifの取引情報を表示するやつ</a>
 						</li>
 					</ul>
 					<span class="navbar-text">

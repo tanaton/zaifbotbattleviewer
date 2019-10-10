@@ -251,7 +251,7 @@ class Client {
         document.title = dispdata.last_trade.action
             + ` ${dispdata.asset_now}`
             + ` (${dispdata.asset_per}%)`
-            + ` 資産（？）の様子`;
+            + ` （私の）暗号通貨資産の様子`;
     }
 }
 
