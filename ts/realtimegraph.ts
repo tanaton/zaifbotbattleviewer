@@ -404,13 +404,7 @@ class Graph {
 
         this.summary_color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
         this.summary_path_stroke = d => this.summary_color(d.name);
-		/*
-				this.text_transform = (d, i) => {
-					const dd = d.values[d.values.length - 1];
-					return "translate(" + (this.focus_x(dd.date) - 80) + "," + (this.focus_y(dd.data) - 11) + ")";
-				};
-				this.text_update = d => d.name + " " + d.values[d.values.length - 1].data;
-		*/
+
         this.focus_legend_transform = (d: Legend, i: number): string => `translate(${(i * 150) + 66},0)`;
         this.focus_legend_update = (d: Legend): string => `${d.name} ${d.last_price.toLocaleString()}`;
 
@@ -464,13 +458,7 @@ class Graph {
         this.focus.append("g")					// y目盛軸
             .attr("class", "y axis")
             .call(this.focus_yAxis);
-		/*
-				this.focus.append("text")				// 凡例
-					.attr("class", "legend user")
-					.attr("x", 3)
-					.attr("dy", ".35em")
-					.text(this.text_update);
-		*/
+
         this.focus_legend.append('rect')		// 凡例の色付け四角
             .attr("x", 0)
             .attr("y", 10)
@@ -579,14 +567,13 @@ class Graph {
     private addsig(data: Stream): boolean {
         const date = data.Date;
         const sigs = data.Signals;
+        const summary_color: string[] = [];
         let ret = false;
         for (const key in sigs) {
             if (isSignal(key) && sigs.hasOwnProperty(key) && this.datamap[key] === undefined) {
                 const data = (sigs[key] || { Data: 0 }).Data;
-                const summary_color = this.summary_color.domain();
-                summary_color.push(key);
-                this.summary_color.domain(summary_color);
                 const cpd: ChartPathData = { date: date, data: data };
+                summary_color.push(key);
                 this.context_data.push({ name: key, values: [cpd] });
                 this.focus_data.push({ name: key, values: [cpd] });
                 this.summary_data.push({ name: key, values: [cpd] });
@@ -595,6 +582,7 @@ class Graph {
                 ret = true;
             }
         }
+        this.summary_color.domain(summary_color);
         return ret;
     }
     // copy on write的な戦略でメモリ管理する
@@ -677,17 +665,19 @@ class Graph {
     }
     public addDepth(data: Stream): void {
         const deps = data.Depths || {};
-        [deps.Asks, deps.Bids].forEach((it, i) => {
-            if (it) {
-                let dep = 0;
-                this.depth_data[i].values = it.map((price: readonly [number, number]): ChartDepthData => {
-                    dep += price[0] * price[1];
-                    return { price: price[0], depth: dep };
-                });
-                this.depth_data[i].values.unshift({ price: it[0][0], depth: 0 });
-                this.draw_depth = true;
-            }
-        });
+        this.addDepthSub(deps.Asks, this.depth_data[0]);
+        this.addDepthSub(deps.Bids, this.depth_data[1]);
+    }
+    private addDepthSub(it: readonly [number, number][] | undefined, data: Depth): void {
+        if (it) {
+            let dep = 0;
+            data.values = it.map((price: readonly [number, number]): ChartDepthData => {
+                dep += price[0] * price[1];
+                return { price: price[0], depth: dep };
+            });
+            data.values.unshift({ price: it[0][0], depth: 0 });
+            this.draw_depth = true;
+        }
     }
     public static contextMinFunc(num: number, it: ChartPathData): number {
         return (num < it.data) ? num : it.data;
@@ -786,10 +776,13 @@ class Graph {
     public sortContext(): void {
         const l = this.focus_data.length;
         for (let i = 0; i < l; i++) {
-            this.focus_data[i].values.sort((a, b): number => a.date.getTime() - b.date.getTime());
-            this.context_data[i].values.sort((a, b): number => a.date.getTime() - b.date.getTime());
-            this.summary_data[i].values.sort((a, b): number => a.date.getTime() - b.date.getTime());
+            this.focus_data[i].values.sort(Graph.compChartPathData);
+            this.context_data[i].values.sort(Graph.compChartPathData);
+            this.summary_data[i].values.sort(Graph.compChartPathData);
         }
+    }
+    public static compChartPathData(a: ChartPathData, b: ChartPathData): number {
+        return a.date.getTime() - b.date.getTime();
     }
     public setFocusXAxis(sec: number = 120): void {
         const datestart = new Date(Date.now() - (sec * 1000));
@@ -822,7 +815,6 @@ class Graph {
         if (this.draw_focus) {
             this.draw_focus = false;
             this.focus.select<SVGPathElement>("path").attr("d", this.focus_path_d);		// 拡大グラフアップデート
-            //			this.focus.select(".legend.user").attr("transform", this.text_transform).text(this.text_update);
             this.focus_legend.select<SVGTextElement>(".focus-legend-text").text(this.focus_legend_update);
             this.focus.select<SVGGElement>(".x.axis").call(this.focus_xAxis);			// 拡大x軸アップデート
             this.focus.select<SVGGElement>(".y.axis").call(this.focus_yAxis); 			// 拡大y軸アップデート

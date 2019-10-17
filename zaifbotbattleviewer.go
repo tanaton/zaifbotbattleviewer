@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -32,6 +33,8 @@ import (
 
 const (
 	StoreDataMax  = 1 << 14 // 16384
+	ZaifStremUrl  = "wss://ws.zaif.jp/stream?currency_pair="
+	ZaifDepthUrl  = "https://api.zaif.jp/api/1/depth/"
 	AccessLogPath = "./log"
 )
 
@@ -130,6 +133,13 @@ type LastPriceHandler struct {
 type GetMonitoringHandler struct {
 	ch <-chan ResultMonitor
 }
+type MarketHandler struct {
+	cp string
+}
+type DepthHandler struct {
+	cp string
+	ch <-chan []byte
+}
 
 type ResponseInfo struct {
 	uri       string
@@ -152,6 +162,13 @@ type MonitoringResponseWriterWithCloseNotify struct {
 	*MonitoringResponseWriter
 }
 
+type Market struct {
+	Date   Unixtime `json:"date"`
+	Price  float64  `json:"price"`
+	Cap    float64  `json:"cap"`
+	Volume float64  `json:"volume"`
+}
+
 var gzipContentTypeList = []string{
 	"text/html",
 	"text/css",
@@ -159,12 +176,12 @@ var gzipContentTypeList = []string{
 	"text/plain",
 	"application/json",
 }
-var zaifStremUrlList = map[string]string{
-	"btc_jpy":  "wss://ws.zaif.jp/stream?currency_pair=btc_jpy",
-	"xem_jpy":  "wss://ws.zaif.jp/stream?currency_pair=xem_jpy",
-	"mona_jpy": "wss://ws.zaif.jp/stream?currency_pair=mona_jpy",
-	"bch_jpy":  "wss://ws.zaif.jp/stream?currency_pair=bch_jpy",
-	"eth_jpy":  "wss://ws.zaif.jp/stream?currency_pair=eth_jpy",
+var zaifStremUrlList = []string{
+	"btc_jpy",
+	"xem_jpy",
+	"mona_jpy",
+	"bch_jpy",
+	"eth_jpy",
 }
 var bufferPool = sync.Pool{
 	New: func() interface{} {
@@ -186,9 +203,11 @@ func main() {
 	var wg sync.WaitGroup
 	ctx, exitch := startExitManageProc(context.Background(), &wg)
 
-	for key, u := range zaifStremUrlList {
+	for _, key := range zaifStremUrlList {
+		u := ZaifStremUrl + key
 		sdch := make(chan StoreDataArray)
 		lpch := make(chan LastPrice)
+		depthch := make(chan []byte)
 		sch := make(chan Stream, 8)
 		storesch := make(chan StoreData, 32)
 		wg.Add(1)
@@ -197,9 +216,12 @@ func main() {
 		go streamStoreProc(ctx, &wg, key, sch, storesch, sdch, lpch)
 		wg.Add(1)
 		go storeWriterProc(ctx, &wg, key, storesch)
+		wg.Add(1)
+		go getDepthProc(ctx, &wg, key, depthch)
 		// URL設定
 		http.Handle("/api/zaif/1/oldstream/"+key, &OldStreamHandler{cp: key, ch: sdch})
 		http.Handle("/api/zaif/1/lastprice/"+key, &LastPriceHandler{ch: lpch})
+		http.Handle("/api/zaif/1/depth/"+key, &DepthHandler{cp: key, ch: depthch})
 	}
 
 	monich := make(chan ResultMonitor)
@@ -210,6 +232,7 @@ func main() {
 
 	// URL設定
 	http.Handle("/api/unko.in/1/monitor", &GetMonitoringHandler{ch: monich})
+	http.Handle("/api/unko.in/1/market/xem_jpy", &MarketHandler{cp: "xem_jpy"})
 	http.Handle("/", http.FileServer(http.Dir("./public_html")))
 
 	ghfunc, err := gziphandler.GzipHandlerWithOpts(gziphandler.CompressionLevel(gzip.BestSpeed), gziphandler.ContentTypes(gzipContentTypeList))
@@ -552,6 +575,50 @@ func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan R
 	}
 }
 
+func getDepthProc(ctx context.Context, wg *sync.WaitGroup, key string, depthch chan<- []byte) {
+	defer wg.Done()
+	f := func(ctx context.Context) ([]byte, error) {
+		c, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(c, http.MethodGet, ZaifDepthUrl+key, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			data, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			return data, nil
+		}
+		return nil, err
+	}
+	data, err := f(ctx)
+	if err != nil {
+		data = []byte{'{', '}'}
+	}
+	tc := time.NewTicker(time.Second * 30)
+	defer tc.Stop()
+	for {
+		select {
+		case <-tc.C:
+			buf, err := f(ctx)
+			if err == nil {
+				data = buf
+			}
+		case depthch <- CopyByteSlice(data):
+		}
+	}
+}
+
+func CopyByteSlice(data []byte) []byte {
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	return buf
+}
+
 func NewStoreItem(date time.Time, name string) (*StoreItem, error) {
 	si := &StoreItem{}
 	si.buf = make([]byte, 0, 16*1024)
@@ -662,6 +729,38 @@ func createStoreFilePath(date time.Time, name string) string {
 
 func createBufferFilePath(name string) string {
 	return filepath.Join("data", fmt.Sprintf("%s_buffer.gob", name))
+}
+
+func readCoinGecko() ([]Market, error) {
+	fp, err := os.Open("xem-jpy-max.csv")
+	if err != nil {
+		return nil, err
+	}
+	defer fp.Close()
+	ml := make([]Market, 0, 2048)
+	scanner := bufio.NewScanner(fp)
+	// ヘッダー読み捨て
+	scanner.Scan()
+	for scanner.Scan() {
+		line := scanner.Text()
+		list := strings.Split(line, ",")
+		if len(list) >= 4 {
+			t, err := time.Parse(`2006-01-02 15:04:05 MST`, list[0])
+			if err != nil {
+				continue
+			}
+			price, _ := strconv.ParseFloat(list[1], 64)
+			cap, _ := strconv.ParseFloat(list[2], 64)
+			volume, _ := strconv.ParseFloat(list[3], 64)
+			ml = append(ml, Market{
+				Date:   Unixtime(t),
+				Price:  price,
+				Cap:    cap,
+				Volume: volume,
+			})
+		}
+	}
+	return ml, nil
 }
 
 func NewMonitoringResponseWriter(w http.ResponseWriter, r *http.Request, rich chan<- ResponseInfo) *MonitoringResponseWriter {
@@ -900,6 +999,44 @@ func (h *LastPriceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		err := json.NewEncoder(w).Encode(res)
+		if err != nil {
+			log.Warnw("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
+		}
+	} else {
+		http.Error(w, "データ取得に失敗しました。", http.StatusInternalServerError)
+	}
+}
+
+func (h *MarketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	market, err := readCoinGecko()
+	if err == nil {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		err := json.NewEncoder(w).Encode(market)
+		if err != nil {
+			log.Warnw("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
+		}
+	} else {
+		http.Error(w, "データ取得に失敗しました。", http.StatusInternalServerError)
+	}
+}
+
+func (h *DepthHandler) getDepth(ctx context.Context) ([]byte, error) {
+	var data []byte
+	c, cancel := context.WithTimeout(ctx, time.Second*3)
+	defer cancel()
+	select {
+	case <-c.Done():
+		return nil, errors.New("timeout")
+	case data = <-h.ch:
+	}
+	return data, nil
+}
+
+func (h *DepthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	data, err := h.getDepth(r.Context())
+	if err == nil {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, err := w.Write(data)
 		if err != nil {
 			log.Warnw("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
 		}
