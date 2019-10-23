@@ -577,25 +577,7 @@ func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan R
 
 func getDepthProc(ctx context.Context, wg *sync.WaitGroup, key string, depthch chan<- []byte) {
 	defer wg.Done()
-	f := func(ctx context.Context) ([]byte, error) {
-		c, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		req, err := http.NewRequestWithContext(c, http.MethodGet, ZaifDepthUrl+key, nil)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			defer resp.Body.Close()
-			data, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
-			}
-			return data, nil
-		}
-		return nil, err
-	}
-	data, err := f(ctx)
+	data, err := getDepth(ctx, key)
 	if err != nil {
 		data = []byte{'{', '}'}
 	}
@@ -604,13 +586,32 @@ func getDepthProc(ctx context.Context, wg *sync.WaitGroup, key string, depthch c
 	for {
 		select {
 		case <-tc.C:
-			buf, err := f(ctx)
+			buf, err := getDepth(ctx, key)
 			if err == nil {
 				data = buf
 			}
 		case depthch <- CopyByteSlice(data):
 		}
 	}
+}
+
+func getDepth(ctx context.Context, key string) ([]byte, error) {
+	c, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(c, http.MethodGet, ZaifDepthUrl+key, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err == nil {
+		defer resp.Body.Close()
+		data, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		return data, nil
+	}
+	return nil, err
 }
 
 func CopyByteSlice(data []byte) []byte {
