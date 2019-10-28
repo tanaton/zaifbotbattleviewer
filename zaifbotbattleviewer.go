@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/gob"
@@ -35,6 +36,7 @@ const (
 	StoreDataMax  = 1 << 14 // 16384
 	ZaifStremUrl  = "wss://ws.zaif.jp/stream?currency_pair="
 	ZaifDepthUrl  = "https://api.zaif.jp/api/1/depth/"
+	ZaifTickerUrl = "https://api.zaif.jp/api/1/ticker/"
 	AccessLogPath = "./log"
 )
 
@@ -122,10 +124,22 @@ type ResultMonitor struct {
 	ResponseCodeOkCount uint
 	ResponseCodeNgCount uint
 }
-type StoreDataArray []StoreData
+type Ticker struct {
+	Last   float64 `json:"last"`   // 終値
+	High   float64 `json:"high"`   // 過去24時間の高値
+	Low    float64 `json:"low"`    // 過去24時間の安値
+	Vwap   float64 `json:"vwap"`   // 過去24時間の加重平均
+	Volume float64 `json:"volume"` // 過去24時間の出来高
+	Bid    float64 `json:"bid"`    // 買気配値
+	Ask    float64 `json:"ask"`    // 売気配値
+}
+type StoreDataArray struct {
+	Stream []StoreData `json:"sd"`
+	Tick   Ticker      `json:"tick"`
+}
 type OldStreamHandler struct {
 	cp string
-	ch <-chan StoreDataArray
+	ch <-chan *StoreDataArray
 }
 type LastPriceHandler struct {
 	ch <-chan LastPrice
@@ -205,11 +219,11 @@ func main() {
 
 	for _, key := range zaifStremUrlList {
 		u := ZaifStremUrl + key
-		sdch := make(chan StoreDataArray)
+		sdch := make(chan *StoreDataArray)
 		lpch := make(chan LastPrice)
 		depthch := make(chan []byte)
 		sch := make(chan Stream, 8)
-		storesch := make(chan StoreData, 32)
+		storesch := make(chan StoreData, 256)
 		wg.Add(1)
 		go streamReaderProc(ctx, &wg, u, sch)
 		wg.Add(1)
@@ -412,7 +426,7 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss string, wsch 
 	}
 }
 
-func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <-chan Stream, wsch chan<- StoreData, sdch chan<- StoreDataArray, lpch chan<- LastPrice) {
+func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <-chan Stream, wsch chan<- StoreData, sdch chan<- *StoreDataArray, lpch chan<- LastPrice) {
 	defer wg.Done()
 	defer close(wsch)
 	oldstream := Stream{}
@@ -457,7 +471,7 @@ func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 	}
 }
 
-func streamBufferReadProc(key string) (StoreDataArray, error) {
+func streamBufferReadProc(key string) (*StoreDataArray, error) {
 	p := createBufferFilePath(key)
 	rfp, err := os.Open(p)
 	if err != nil {
@@ -465,11 +479,11 @@ func streamBufferReadProc(key string) (StoreDataArray, error) {
 	}
 	defer rfp.Close()
 	sda := NewStoreDataArray()
-	err = gob.NewDecoder(rfp).Decode(&sda)
+	err = gob.NewDecoder(rfp).Decode(sda)
 	return sda, err
 }
 
-func streamBufferWriteProc(key string, sda StoreDataArray) error {
+func streamBufferWriteProc(key string, sda *StoreDataArray) error {
 	p := createBufferFilePath(key)
 	direrr := createDir(p)
 	if direrr != nil {
@@ -505,7 +519,8 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 					break
 				}
 			} else if date.Day() != old.Day() {
-				err := si.nextFile(date)
+				tc, _ := getTicker(ctx, key)
+				err := si.nextFile(date, tc)
 				if err != nil {
 					log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", key)
 					break
@@ -518,6 +533,23 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 			}
 		}
 	}
+}
+
+func getTicker(ctx context.Context, key string) (*Ticker, error) {
+	c, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(c, http.MethodGet, ZaifTickerUrl+key, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var tc Ticker
+	err = json.NewDecoder(resp.Body).Decode(&tc)
+	return &tc, err
 }
 
 // サーバお手軽監視用
@@ -662,7 +694,7 @@ func (si *StoreItem) fileopen(p string) error {
 		}
 		si.fp = fp
 		si.w.Reset(si.fp)
-		si.w.WriteByte('[')
+		si.w.Write([]byte(`{"sd":[`))
 		si.w.Flush() // JSONの正しさを保つために書き込みしておく
 		si.nonempty = false
 	} else {
@@ -677,8 +709,20 @@ func (si *StoreItem) fileopen(p string) error {
 	return nil
 }
 
-func (si *StoreItem) nextFile(date time.Time) error {
-	si.w.WriteByte(']')
+func (si *StoreItem) nextFile(date time.Time, tc *Ticker) error {
+	buf := &bytes.Buffer{}
+	si.w.WriteString(`],"tick":`)
+	if tc != nil {
+		err := json.NewEncoder(buf).Encode(tc)
+		if err == nil {
+			buf.WriteTo(si.w)
+		} else {
+			si.w.WriteString(`{}`)
+		}
+	} else {
+		si.w.WriteString(`{}`)
+	}
+	si.w.WriteByte('}')
 	si.Close()
 	si.date = date
 	p := si.createPathTmp()
@@ -844,31 +888,33 @@ func (mrw *MonitoringResponseWriter) Push(target string, opts *http.PushOptions)
 
 var storeDataArrayPool = sync.Pool{
 	New: func() interface{} {
-		return StoreDataArray(make([]StoreData, 0, StoreDataMax))
+		return &StoreDataArray{
+			Stream: make([]StoreData, 0, StoreDataMax),
+		}
 	},
 }
 
-func NewStoreDataArray() StoreDataArray {
-	return storeDataArrayPool.Get().(StoreDataArray)
+func NewStoreDataArray() *StoreDataArray {
+	return storeDataArrayPool.Get().(*StoreDataArray)
 }
-func (sda StoreDataArray) Duplicate() StoreDataArray {
+func (sda StoreDataArray) Duplicate() *StoreDataArray {
 	sda2 := NewStoreDataArray()
-	sda2 = append(sda2, sda...)
+	sda2.Stream = append(sda2.Stream, sda.Stream...)
 	return sda2
 }
 func (sda *StoreDataArray) Push(sd StoreData) {
-	*sda = append(*sda, sd)
-	if len(*sda) > StoreDataMax {
-		(*sda)[0] = StoreData{}
-		*sda = (*sda)[1:]
+	sda.Stream = append(sda.Stream, sd)
+	if len(sda.Stream) > StoreDataMax {
+		sda.Stream[0] = StoreData{}
+		sda.Stream = sda.Stream[1:]
 	}
 }
 func (sda StoreDataArray) Len() int {
-	return len(sda)
+	return len(sda.Stream)
 }
 func (sda *StoreDataArray) Close() error {
-	*sda = (*sda)[:0]
-	storeDataArrayPool.Put(*sda)
+	sda.Stream = sda.Stream[:0]
+	storeDataArrayPool.Put(sda.Stream)
 	return nil
 }
 
@@ -906,7 +952,7 @@ func StreamToStoreData(s, olds Stream) (StoreData, bool) {
 	return sd, valid
 }
 
-func (h *OldStreamHandler) getStoreData(ctx context.Context) (sda StoreDataArray, err error) {
+func (h *OldStreamHandler) getStoreData(ctx context.Context) (sda *StoreDataArray, err error) {
 	lctx, lcancel := context.WithTimeout(ctx, time.Second*3)
 	defer lcancel()
 	select {
@@ -954,10 +1000,10 @@ func StoreDataToJSON(buf []byte, sd StoreData) []byte {
 	return buf
 }
 
-func StoreDataArrayToJSON(w io.Writer, sda StoreDataArray) {
+func StoreDataArrayToJSON(w io.Writer, sda *StoreDataArray) {
 	buf := bufferPool.Get().([]byte)
 	buf = append(buf, '[')
-	for i, sd := range sda {
+	for i, sd := range sda.Stream {
 		if i > 0 {
 			buf = append(buf, ',')
 		}
