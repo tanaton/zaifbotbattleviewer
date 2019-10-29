@@ -72,8 +72,7 @@ func (ts *Unixtime) UnmarshalJSON(data []byte) error {
 	return err
 }
 func (ts Unixtime) MarshalJSON() ([]byte, error) {
-	buf := make([]byte, 0, 10)
-	return strconv.AppendInt(buf, time.Time(ts).Unix(), 10), nil
+	return strconv.AppendInt([]byte(nil), time.Time(ts).Unix(), 10), nil
 }
 func (ts *Unixtime) UnmarshalBinary(data []byte) error {
 	t := time.Time(*ts)
@@ -501,6 +500,7 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 	defer wg.Done()
 	var old time.Time
 	var si *StoreItem
+	tl := make([]Trade, 0, 128*1024)
 	for {
 		select {
 		case <-ctx.Done():
@@ -511,28 +511,64 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 			return
 		case sd := <-rsch:
 			date := time.Time(sd.Timestamp)
+			var err error
 			if si == nil {
-				var err error
 				si, err = NewStoreItem(date, key)
 				if err != nil {
 					log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", key)
 					break
 				}
 			} else if date.Day() != old.Day() {
-				tc, _ := getTicker(ctx, key)
-				err := si.nextFile(date, tc)
+				var tc *Ticker
+				tc, err = getTicker(ctx, key)
+				if err != nil {
+					log.Infow("tick取得に失敗しました。", "error", err, "name", key)
+					tc = tradeToTicker(tl)
+				}
+				err = si.nextFile(date, tc)
 				if err != nil {
 					log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", key)
 					break
 				}
+				tl = tl[:0]
 			}
 			old = date
-			err := si.WriteJsonLine(sd)
+			if sd.Trade != nil {
+				tl = append(tl, *sd.Trade)
+				if len(tl) >= 128*1024-1 {
+					tl = tl[1:]
+				}
+			}
+			err = si.WriteJsonLine(sd)
 			if err != nil {
 				log.Warnw("JSONファイル出力に失敗しました。", "error", err)
 			}
 		}
 	}
+}
+
+func tradeToTicker(tl []Trade) *Ticker {
+	var vol float64
+	tc := &Ticker{High: 0.0, Low: 1e9}
+	for _, it := range tl {
+		vol += it.Price * it.Amount
+		tc.Last = it.Price
+		tc.Volume += it.Amount
+		if tc.High < it.Price {
+			tc.High = it.Price
+		}
+		if tc.Low > it.Price {
+			tc.Low = it.Price
+		}
+		switch it.TradeType {
+		case "ask":
+			tc.Ask = it.Price
+		case "bid":
+			tc.Bid = it.Price
+		}
+	}
+	tc.Vwap = vol / tc.Volume
+	return tc
 }
 
 func getTicker(ctx context.Context, key string) (*Ticker, error) {
@@ -647,9 +683,9 @@ func getDepth(ctx context.Context, key string) ([]byte, error) {
 }
 
 func CopyByteSlice(data []byte) []byte {
-	buf := make([]byte, len(data))
-	copy(buf, data)
-	return buf
+	// 配列のゼロクリアを省略する最適化が入っているらしいので
+	// https://github.com/golang/go/issues/26252
+	return append([]byte(nil), data...)
 }
 
 func NewStoreItem(date time.Time, name string) (*StoreItem, error) {
