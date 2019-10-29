@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -134,7 +135,7 @@ type Ticker struct {
 }
 type StoreDataArray struct {
 	Stream []StoreData `json:"sd"`
-	Tick   Ticker      `json:"tick"`
+	Tick   *Ticker     `json:"tick,omitempty"`
 }
 type OldStreamHandler struct {
 	cp string
@@ -152,6 +153,9 @@ type MarketHandler struct {
 type DepthHandler struct {
 	cp string
 	ch <-chan []byte
+}
+type TicksHandler struct {
+	cp string
 }
 
 type ResponseInfo struct {
@@ -217,24 +221,76 @@ func main() {
 	ctx, exitch := startExitManageProc(context.Background(), &wg)
 
 	for _, key := range zaifStremUrlList {
-		u := ZaifStremUrl + key
 		sdch := make(chan *StoreDataArray)
 		lpch := make(chan LastPrice)
 		depthch := make(chan []byte)
 		sch := make(chan Stream, 8)
 		storesch := make(chan StoreData, 256)
 		wg.Add(1)
-		go streamReaderProc(ctx, &wg, u, sch)
+		go streamReaderProc(ctx, &wg, key, sch)
 		wg.Add(1)
 		go streamStoreProc(ctx, &wg, key, sch, storesch, sdch, lpch)
 		wg.Add(1)
 		go storeWriterProc(ctx, &wg, key, storesch)
 		wg.Add(1)
 		go getDepthProc(ctx, &wg, key, depthch)
+		wg.Add(1)
+		go func(ctx context.Context, wg *sync.WaitGroup, key string) {
+			defer wg.Done()
+			match, err := filepath.Glob("./data/*_" + key + ".json")
+			if err != nil {
+				return
+			}
+			if len(match) > 1 {
+				sort.Slice(match, func(i, j int) bool { return match[i] > match[j] })
+				max := 31
+				if max > len(match) {
+					max = len(match)
+				}
+				f := func(p string) ([]StoreData, error) {
+					fp, err := os.Open(p)
+					if err != nil {
+						return nil, err
+					}
+					var sdl []StoreData
+					sda := StoreDataArray{}
+					err = json.NewDecoder(fp).Decode(&sda)
+					if err != nil {
+						fp.Seek(0, 0)
+						err = json.NewDecoder(fp).Decode(sdl)
+						if err != nil {
+							return nil, err
+						}
+					} else {
+						sdl = sda.Stream
+					}
+					return sdl, nil
+				}
+				for _, p := range match[1:max] {
+					sdl, err := f(p)
+					if err != nil {
+						return
+					}
+					storeDataToTicker(sdl)
+				}
+			}
+			t := time.NewTicker(time.Minute)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					log.Infow("getTickerProc終了")
+					return
+				case <-t.C:
+					// 時間経過
+				}
+			}
+		}(ctx, &wg, key)
 		// URL設定
 		http.Handle("/api/zaif/1/oldstream/"+key, &OldStreamHandler{cp: key, ch: sdch})
 		http.Handle("/api/zaif/1/lastprice/"+key, &LastPriceHandler{ch: lpch})
 		http.Handle("/api/zaif/1/depth/"+key, &DepthHandler{cp: key, ch: depthch})
+		http.Handle("/api/zaif/1/ticks/"+key, &TicksHandler{cp: key})
 	}
 
 	monich := make(chan ResultMonitor)
@@ -365,10 +421,11 @@ func startExitManageProc(ctx context.Context, wg *sync.WaitGroup) (context.Conte
 	return ectx, exitch
 }
 
-func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, wss string, wsch chan<- Stream) {
+func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, key string, wsch chan<- Stream) {
 	defer wg.Done()
 	defer close(wsch)
 	wait := time.Duration(rand.Uint64()%5000) * time.Millisecond
+	wss := ZaifStremUrl + key
 	for {
 		time.Sleep(wait)
 		log.Infow("Websoket接続", "path", wss)
@@ -523,7 +580,6 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 				tc, err = getTicker(ctx, key)
 				if err != nil {
 					log.Infow("tick取得に失敗しました。", "error", err, "name", key)
-					tc = tradeToTicker(tl)
 				}
 				err = si.nextFile(date, tc)
 				if err != nil {
@@ -547,25 +603,31 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 	}
 }
 
-func tradeToTicker(tl []Trade) *Ticker {
+func storeDataToTicker(sdl []StoreData) *Ticker {
 	var vol float64
 	tc := &Ticker{High: 0.0, Low: 1e9}
-	for _, it := range tl {
-		vol += it.Price * it.Amount
-		tc.Last = it.Price
-		tc.Volume += it.Amount
-		if tc.High < it.Price {
-			tc.High = it.Price
+	for _, sd := range sdl {
+		it := sd.Trade
+		if it != nil {
+			vol += it.Price * it.Amount
+			tc.Last = it.Price
+			tc.Volume += it.Amount
+			if tc.High < it.Price {
+				tc.High = it.Price
+			}
+			if tc.Low > it.Price {
+				tc.Low = it.Price
+			}
+			switch it.TradeType {
+			case "ask":
+				tc.Ask = it.Price
+			case "bid":
+				tc.Bid = it.Price
+			}
 		}
-		if tc.Low > it.Price {
-			tc.Low = it.Price
-		}
-		switch it.TradeType {
-		case "ask":
-			tc.Ask = it.Price
-		case "bid":
-			tc.Bid = it.Price
-		}
+	}
+	if tc.Volume <= 0.000000000001 {
+		tc.Volume = 1
 	}
 	tc.Vwap = vol / tc.Volume
 	return tc
@@ -747,16 +809,13 @@ func (si *StoreItem) fileopen(p string) error {
 
 func (si *StoreItem) nextFile(date time.Time, tc *Ticker) error {
 	buf := &bytes.Buffer{}
-	si.w.WriteString(`],"tick":`)
+	si.w.WriteByte(']')
 	if tc != nil {
 		err := json.NewEncoder(buf).Encode(tc)
 		if err == nil {
+			si.w.WriteString(`,"tick":`)
 			buf.WriteTo(si.w)
-		} else {
-			si.w.WriteString(`{}`)
 		}
-	} else {
-		si.w.WriteString(`{}`)
 	}
 	si.w.WriteByte('}')
 	si.Close()
@@ -1126,6 +1185,10 @@ func (h *DepthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		http.Error(w, "データ取得に失敗しました。", http.StatusInternalServerError)
 	}
+}
+
+func (h *TicksHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "データ取得に失敗しました。", http.StatusInternalServerError)
 }
 
 func (h *GetMonitoringHandler) getResultMonitor(ctx context.Context) (ResultMonitor, error) {
