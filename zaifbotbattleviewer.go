@@ -195,7 +195,8 @@ var bufferPool = sync.Pool{
 var log *zap.SugaredLogger
 
 func init() {
-	logger, err := zap.NewDevelopment()
+	//logger, err := zap.NewDevelopment()
+	logger, err := zap.NewProduction()
 	if err != nil {
 		panic(err)
 	}
@@ -453,6 +454,7 @@ func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 				sdatmp.Push(sd)
 				select {
 				case wsch <- sd:
+					log.Debugw("送信！ streamStoreProc -> storeWriterProc", "key", key, "data", sd)
 				default:
 					// 送信できなかったらすぐに諦める
 				}
@@ -695,6 +697,9 @@ func getDepthProc(ctx context.Context, wg *sync.WaitGroup, key string, depthch c
 	defer tc.Stop()
 	for {
 		select {
+		case <-ctx.Done():
+			log.Infow("getDepthProc終了")
+			return
 		case <-tc.C:
 			buf, err := getDepth(ctx, key)
 			if err == nil {
