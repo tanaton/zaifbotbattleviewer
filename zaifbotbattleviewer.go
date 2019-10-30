@@ -492,7 +492,7 @@ func streamBufferWriteProc(key string, sda StoreDataArray) error {
 
 func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <-chan StoreData) {
 	defer wg.Done()
-	var old time.Time
+	old := time.Now()
 	var si *StoreItem
 	for {
 		select {
@@ -531,7 +531,7 @@ func getTickerProc(ctx context.Context, wg *sync.WaitGroup, key string, tch chan
 	defer wg.Done()
 	dir := filepath.Join(RootDataPath, "tick", key)
 	tcl := readTicks(dir)
-	var old time.Time
+	old := time.Now()
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
