@@ -474,7 +474,7 @@ func streamBufferReadProc(key string) (StoreDataArray, error) {
 	}
 	defer rfp.Close()
 	sda := NewStoreDataArray()
-	err = gob.NewDecoder(rfp).Decode(sda)
+	err = gob.NewDecoder(rfp).Decode(&sda)
 	return sda, err
 }
 
