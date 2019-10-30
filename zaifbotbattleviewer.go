@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/gob"
@@ -19,7 +18,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -39,6 +37,7 @@ const (
 	ZaifDepthUrl  = "https://api.zaif.jp/api/1/depth/"
 	ZaifTickerUrl = "https://api.zaif.jp/api/1/ticker/"
 	AccessLogPath = "./log"
+	RootDataPath  = "data"
 )
 
 type PriceAmount [2]float64
@@ -133,13 +132,10 @@ type Ticker struct {
 	Bid    float64 `json:"bid"`    // 買気配値
 	Ask    float64 `json:"ask"`    // 売気配値
 }
-type StoreDataArray struct {
-	Stream []StoreData `json:"sd"`
-	Tick   *Ticker     `json:"tick,omitempty"`
-}
+type StoreDataArray []StoreData
 type OldStreamHandler struct {
 	cp string
-	ch <-chan *StoreDataArray
+	ch <-chan StoreDataArray
 }
 type LastPriceHandler struct {
 	ch <-chan LastPrice
@@ -147,15 +143,13 @@ type LastPriceHandler struct {
 type GetMonitoringHandler struct {
 	ch <-chan ResultMonitor
 }
-type MarketHandler struct {
-	cp string
-}
 type DepthHandler struct {
 	cp string
 	ch <-chan []byte
 }
 type TicksHandler struct {
 	cp string
+	ch <-chan []Ticker
 }
 
 type ResponseInfo struct {
@@ -177,13 +171,6 @@ type MonitoringResponseWriter struct {
 }
 type MonitoringResponseWriterWithCloseNotify struct {
 	*MonitoringResponseWriter
-}
-
-type Market struct {
-	Date   Unixtime `json:"date"`
-	Price  float64  `json:"price"`
-	Cap    float64  `json:"cap"`
-	Volume float64  `json:"volume"`
 }
 
 var gzipContentTypeList = []string{
@@ -221,11 +208,12 @@ func main() {
 	ctx, exitch := startExitManageProc(context.Background(), &wg)
 
 	for _, key := range zaifStremUrlList {
-		sdch := make(chan *StoreDataArray)
+		sdch := make(chan StoreDataArray)
 		lpch := make(chan LastPrice)
 		depthch := make(chan []byte)
 		sch := make(chan Stream, 8)
 		storesch := make(chan StoreData, 256)
+		tch := make(chan []Ticker)
 		wg.Add(1)
 		go streamReaderProc(ctx, &wg, key, sch)
 		wg.Add(1)
@@ -235,62 +223,12 @@ func main() {
 		wg.Add(1)
 		go getDepthProc(ctx, &wg, key, depthch)
 		wg.Add(1)
-		go func(ctx context.Context, wg *sync.WaitGroup, key string) {
-			defer wg.Done()
-			match, err := filepath.Glob("./data/*_" + key + ".json")
-			if err != nil {
-				return
-			}
-			if len(match) > 1 {
-				sort.Slice(match, func(i, j int) bool { return match[i] > match[j] })
-				max := 31
-				if max > len(match) {
-					max = len(match)
-				}
-				f := func(p string) ([]StoreData, error) {
-					fp, err := os.Open(p)
-					if err != nil {
-						return nil, err
-					}
-					var sdl []StoreData
-					sda := StoreDataArray{}
-					err = json.NewDecoder(fp).Decode(&sda)
-					if err != nil {
-						fp.Seek(0, 0)
-						err = json.NewDecoder(fp).Decode(sdl)
-						if err != nil {
-							return nil, err
-						}
-					} else {
-						sdl = sda.Stream
-					}
-					return sdl, nil
-				}
-				for _, p := range match[1:max] {
-					sdl, err := f(p)
-					if err != nil {
-						return
-					}
-					storeDataToTicker(sdl)
-				}
-			}
-			t := time.NewTicker(time.Minute)
-			defer t.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					log.Infow("getTickerProc終了")
-					return
-				case <-t.C:
-					// 時間経過
-				}
-			}
-		}(ctx, &wg, key)
+		go getTickerProc(ctx, &wg, key, tch)
 		// URL設定
 		http.Handle("/api/zaif/1/oldstream/"+key, &OldStreamHandler{cp: key, ch: sdch})
 		http.Handle("/api/zaif/1/lastprice/"+key, &LastPriceHandler{ch: lpch})
 		http.Handle("/api/zaif/1/depth/"+key, &DepthHandler{cp: key, ch: depthch})
-		http.Handle("/api/zaif/1/ticks/"+key, &TicksHandler{cp: key})
+		http.Handle("/api/zaif/1/ticks/"+key, &TicksHandler{cp: key, ch: tch})
 	}
 
 	monich := make(chan ResultMonitor)
@@ -301,7 +239,6 @@ func main() {
 
 	// URL設定
 	http.Handle("/api/unko.in/1/monitor", &GetMonitoringHandler{ch: monich})
-	http.Handle("/api/unko.in/1/market/xem_jpy", &MarketHandler{cp: "xem_jpy"})
 	http.Handle("/", http.FileServer(http.Dir("./public_html")))
 
 	ghfunc, err := gziphandler.GzipHandlerWithOpts(gziphandler.CompressionLevel(gzip.BestSpeed), gziphandler.ContentTypes(gzipContentTypeList))
@@ -482,7 +419,7 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, key string, wsch 
 	}
 }
 
-func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <-chan Stream, wsch chan<- StoreData, sdch chan<- *StoreDataArray, lpch chan<- LastPrice) {
+func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <-chan Stream, wsch chan<- StoreData, sdch chan<- StoreDataArray, lpch chan<- LastPrice) {
 	defer wg.Done()
 	defer close(wsch)
 	oldstream := Stream{}
@@ -527,7 +464,7 @@ func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 	}
 }
 
-func streamBufferReadProc(key string) (*StoreDataArray, error) {
+func streamBufferReadProc(key string) (StoreDataArray, error) {
 	p := createBufferFilePath(key)
 	rfp, err := os.Open(p)
 	if err != nil {
@@ -539,7 +476,7 @@ func streamBufferReadProc(key string) (*StoreDataArray, error) {
 	return sda, err
 }
 
-func streamBufferWriteProc(key string, sda *StoreDataArray) error {
+func streamBufferWriteProc(key string, sda StoreDataArray) error {
 	p := createBufferFilePath(key)
 	direrr := createDir(p)
 	if direrr != nil {
@@ -557,7 +494,6 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 	defer wg.Done()
 	var old time.Time
 	var si *StoreItem
-	tl := make([]Trade, 0, 128*1024)
 	for {
 		select {
 		case <-ctx.Done():
@@ -576,25 +512,13 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 					break
 				}
 			} else if date.Day() != old.Day() {
-				var tc *Ticker
-				tc, err = getTicker(ctx, key)
-				if err != nil {
-					log.Infow("tick取得に失敗しました。", "error", err, "name", key)
-				}
-				err = si.nextFile(date, tc)
+				err = si.nextFile(date)
 				if err != nil {
 					log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", key)
 					break
 				}
-				tl = tl[:0]
 			}
 			old = date
-			if sd.Trade != nil {
-				tl = append(tl, *sd.Trade)
-				if len(tl) >= 128*1024-1 {
-					tl = tl[1:]
-				}
-			}
 			err = si.WriteJsonLine(sd)
 			if err != nil {
 				log.Warnw("JSONファイル出力に失敗しました。", "error", err)
@@ -603,34 +527,32 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 	}
 }
 
-func storeDataToTicker(sdl []StoreData) *Ticker {
-	var vol float64
-	tc := &Ticker{High: 0.0, Low: 1e9}
-	for _, sd := range sdl {
-		it := sd.Trade
-		if it != nil {
-			vol += it.Price * it.Amount
-			tc.Last = it.Price
-			tc.Volume += it.Amount
-			if tc.High < it.Price {
-				tc.High = it.Price
+func getTickerProc(ctx context.Context, wg *sync.WaitGroup, key string, tch chan<- []Ticker) {
+	defer wg.Done()
+	dir := filepath.Join(RootDataPath, "tick", key)
+	tcl := readTicks(dir)
+	var old time.Time
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Infow("getTickerProc終了")
+			return
+		case now := <-t.C:
+			if now.Day() != old.Day() {
+				tc, err := getTicker(ctx, key)
+				if err != nil {
+					break
+				}
+				p := filepath.Join(dir, fmt.Sprintf("%s_%s.json", old.Format("20060102"), key))
+				tcl = append(tcl, *tc)
+				createTickJSONFile(p, tc)
 			}
-			if tc.Low > it.Price {
-				tc.Low = it.Price
-			}
-			switch it.TradeType {
-			case "ask":
-				tc.Ask = it.Price
-			case "bid":
-				tc.Bid = it.Price
-			}
+			old = now
+		case tch <- duplicateTicks(tcl):
 		}
 	}
-	if tc.Volume <= 0.000000000001 {
-		tc.Volume = 1
-	}
-	tc.Vwap = vol / tc.Volume
-	return tc
 }
 
 func getTicker(ctx context.Context, key string) (*Ticker, error) {
@@ -648,6 +570,64 @@ func getTicker(ctx context.Context, key string) (*Ticker, error) {
 	var tc Ticker
 	err = json.NewDecoder(resp.Body).Decode(&tc)
 	return &tc, err
+}
+
+func duplicateTicks(tcl []Ticker) []Ticker {
+	return append([]Ticker(nil), tcl...)
+}
+
+func createTickJSONFile(p string, tc *Ticker) {
+	direrr := createDir(p)
+	if direrr != nil {
+		log.Warnw("フォルダ作成に失敗しました。", "error", direrr, "path", p)
+		return
+	}
+	wfp, err := os.Create(p)
+	if err != nil {
+		log.Warnw("ファイル作成に失敗しました。", "error", err, "path", p)
+		return
+	}
+	defer wfp.Close()
+	err = json.NewEncoder(wfp).Encode(tc)
+	if err != nil {
+		log.Warnw("JSON出力に失敗しました。", "error", err, "path", p)
+		return
+	}
+}
+
+func readTicks(dir string) []Ticker {
+	tcl := make([]Ticker, 0, 365)
+	match, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if len(match) > 0 && err == nil {
+		// 降順
+		sort.Slice(match, func(i, j int) bool { return match[i] > match[j] })
+		for _, p := range match {
+			tc, err := readTickData(p)
+			if err != nil {
+				break
+			}
+			tcl = append(tcl, *tc)
+		}
+		// 反転
+		for i, j := 0, len(tcl)-1; i < j; i, j = i+1, j-1 {
+			tcl[i], tcl[j] = tcl[j], tcl[i]
+		}
+	}
+	return tcl
+}
+
+func readTickData(p string) (*Ticker, error) {
+	fp, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer fp.Close()
+	var tc Ticker
+	err = json.NewDecoder(fp).Decode(&tc)
+	if err != nil {
+		return nil, err
+	}
+	return &tc, nil
 }
 
 // サーバお手軽監視用
@@ -778,9 +758,9 @@ func (si *StoreItem) WriteJsonLine(sd StoreData) error {
 
 func (si *StoreItem) Close() error {
 	si.w.Flush()
-	si.fp.Close()
+	err := si.fp.Close()
 	si.fp = nil
-	return si.store()
+	return err
 }
 
 func (si *StoreItem) fileopen(p string) error {
@@ -792,7 +772,7 @@ func (si *StoreItem) fileopen(p string) error {
 		}
 		si.fp = fp
 		si.w.Reset(si.fp)
-		si.w.Write([]byte(`{"sd":[`))
+		si.w.WriteByte('[')
 		si.w.Flush() // JSONの正しさを保つために書き込みしておく
 		si.nonempty = false
 	} else {
@@ -807,25 +787,20 @@ func (si *StoreItem) fileopen(p string) error {
 	return nil
 }
 
-func (si *StoreItem) nextFile(date time.Time, tc *Ticker) error {
-	buf := &bytes.Buffer{}
+func (si *StoreItem) nextFile(date time.Time) error {
 	si.w.WriteByte(']')
-	if tc != nil {
-		err := json.NewEncoder(buf).Encode(tc)
-		if err == nil {
-			si.w.WriteString(`,"tick":`)
-			buf.WriteTo(si.w)
-		}
-	}
-	si.w.WriteByte('}')
 	si.Close()
+	si.store()
 	si.date = date
 	p := si.createPathTmp()
 	return si.fileopen(p)
 }
 
 func (si *StoreItem) store() error {
-	n := createStoreFilePath(si.date, si.name) + ".gz"
+	n := si.createPathStream()
+	if err := createDir(n); err != nil {
+		return err
+	}
 	o := si.createPathTmp()
 	rfp, err := os.Open(o)
 	if err != nil {
@@ -844,7 +819,11 @@ func (si *StoreItem) store() error {
 }
 
 func (si *StoreItem) createPathTmp() string {
-	return createStoreFilePath(si.date, si.name) + ".tmp"
+	return createStoreFilePath(si.date, si.name, "tmp")
+}
+
+func (si *StoreItem) createPathStream() string {
+	return createStoreFilePath(si.date, si.name, "stream") + ".gz"
 }
 
 func createDir(p string) error {
@@ -863,44 +842,12 @@ func createDir(p string) error {
 	return err
 }
 
-func createStoreFilePath(date time.Time, name string) string {
-	return filepath.Join("data", fmt.Sprintf("%s_%s.json", date.Format("20060102"), name))
+func createStoreFilePath(date time.Time, key, cate string) string {
+	return filepath.Join(RootDataPath, cate, key, fmt.Sprintf("%s_%s.json", key, date.Format("20060102")))
 }
 
-func createBufferFilePath(name string) string {
-	return filepath.Join("data", fmt.Sprintf("%s_buffer.gob", name))
-}
-
-func readCoinGecko() ([]Market, error) {
-	fp, err := os.Open("xem-jpy-max.csv")
-	if err != nil {
-		return nil, err
-	}
-	defer fp.Close()
-	ml := make([]Market, 0, 2048)
-	scanner := bufio.NewScanner(fp)
-	// ヘッダー読み捨て
-	scanner.Scan()
-	for scanner.Scan() {
-		line := scanner.Text()
-		list := strings.Split(line, ",")
-		if len(list) >= 4 {
-			t, err := time.Parse(`2006-01-02 15:04:05 MST`, list[0])
-			if err != nil {
-				continue
-			}
-			price, _ := strconv.ParseFloat(list[1], 64)
-			cap, _ := strconv.ParseFloat(list[2], 64)
-			volume, _ := strconv.ParseFloat(list[3], 64)
-			ml = append(ml, Market{
-				Date:   Unixtime(t),
-				Price:  price,
-				Cap:    cap,
-				Volume: volume,
-			})
-		}
-	}
-	return ml, nil
+func createBufferFilePath(key string) string {
+	return filepath.Join(RootDataPath, "tmp", fmt.Sprintf("%s_buffer.gob", key))
 }
 
 func NewMonitoringResponseWriter(w http.ResponseWriter, r *http.Request, rich chan<- ResponseInfo) *MonitoringResponseWriter {
@@ -983,33 +930,31 @@ func (mrw *MonitoringResponseWriter) Push(target string, opts *http.PushOptions)
 
 var storeDataArrayPool = sync.Pool{
 	New: func() interface{} {
-		return &StoreDataArray{
-			Stream: make([]StoreData, 0, StoreDataMax),
-		}
+		return StoreDataArray(make([]StoreData, 0, StoreDataMax))
 	},
 }
 
-func NewStoreDataArray() *StoreDataArray {
-	return storeDataArrayPool.Get().(*StoreDataArray)
+func NewStoreDataArray() StoreDataArray {
+	return storeDataArrayPool.Get().(StoreDataArray)
 }
-func (sda StoreDataArray) Duplicate() *StoreDataArray {
+func (sda StoreDataArray) Duplicate() StoreDataArray {
 	sda2 := NewStoreDataArray()
-	sda2.Stream = append(sda2.Stream, sda.Stream...)
+	sda2 = append(sda2, sda...)
 	return sda2
 }
 func (sda *StoreDataArray) Push(sd StoreData) {
-	sda.Stream = append(sda.Stream, sd)
-	if len(sda.Stream) > StoreDataMax {
-		sda.Stream[0] = StoreData{}
-		sda.Stream = sda.Stream[1:]
+	*sda = append(*sda, sd)
+	if len(*sda) > StoreDataMax {
+		(*sda)[0] = StoreData{}
+		*sda = (*sda)[1:]
 	}
 }
 func (sda StoreDataArray) Len() int {
-	return len(sda.Stream)
+	return len(sda)
 }
 func (sda *StoreDataArray) Close() error {
-	sda.Stream = sda.Stream[:0]
-	storeDataArrayPool.Put(sda.Stream)
+	*sda = (*sda)[:0]
+	storeDataArrayPool.Put(*sda)
 	return nil
 }
 
@@ -1047,7 +992,7 @@ func StreamToStoreData(s, olds Stream) (StoreData, bool) {
 	return sd, valid
 }
 
-func (h *OldStreamHandler) getStoreData(ctx context.Context) (sda *StoreDataArray, err error) {
+func (h *OldStreamHandler) getStoreData(ctx context.Context) (sda StoreDataArray, err error) {
 	lctx, lcancel := context.WithTimeout(ctx, time.Second*3)
 	defer lcancel()
 	select {
@@ -1095,10 +1040,10 @@ func StoreDataToJSON(buf []byte, sd StoreData) []byte {
 	return buf
 }
 
-func StoreDataArrayToJSON(w io.Writer, sda *StoreDataArray) {
+func StoreDataArrayToJSON(w io.Writer, sda StoreDataArray) {
 	buf := bufferPool.Get().([]byte)
 	buf = append(buf, '[')
-	for i, sd := range sda.Stream {
+	for i, sd := range sda {
 		if i > 0 {
 			buf = append(buf, ',')
 		}
@@ -1149,19 +1094,6 @@ func (h *LastPriceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *MarketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	market, err := readCoinGecko()
-	if err == nil {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		err := json.NewEncoder(w).Encode(market)
-		if err != nil {
-			log.Warnw("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
-		}
-	} else {
-		http.Error(w, "データ取得に失敗しました。", http.StatusInternalServerError)
-	}
-}
-
 func (h *DepthHandler) getDepth(ctx context.Context) ([]byte, error) {
 	var data []byte
 	c, cancel := context.WithTimeout(ctx, time.Second*3)
@@ -1187,8 +1119,29 @@ func (h *DepthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *TicksHandler) getTick(ctx context.Context) ([]Ticker, error) {
+	var tcl []Ticker
+	c, cancel := context.WithTimeout(ctx, time.Second*3)
+	defer cancel()
+	select {
+	case <-c.Done():
+		return nil, errors.New("timeout")
+	case tcl = <-h.ch:
+	}
+	return tcl, nil
+}
+
 func (h *TicksHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "データ取得に失敗しました。", http.StatusInternalServerError)
+	tcl, err := h.getTick(r.Context())
+	if err == nil {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		err := json.NewEncoder(w).Encode(tcl)
+		if err != nil {
+			log.Warnw("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
+		}
+	} else {
+		http.Error(w, "データ取得に失敗しました。", http.StatusInternalServerError)
+	}
 }
 
 func (h *GetMonitoringHandler) getResultMonitor(ctx context.Context) (ResultMonitor, error) {
