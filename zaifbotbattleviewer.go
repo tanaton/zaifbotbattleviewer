@@ -361,7 +361,6 @@ func startExitManageProc(ctx context.Context, wg *sync.WaitGroup) (context.Conte
 
 func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, key string, wsch chan<- Stream) {
 	defer wg.Done()
-	defer close(wsch)
 	wait := time.Duration(rand.Uint64()%5000) * time.Millisecond
 	wss := ZaifStremUrl + key
 	for {
@@ -422,7 +421,6 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, key string, wsch 
 
 func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <-chan Stream, wsch chan<- StoreData, sdch chan<- StoreDataArray, lpch chan<- LastPrice) {
 	defer wg.Done()
-	defer close(wsch)
 	oldstream := Stream{}
 	sda, err := streamBufferReadProc(key)
 	if err != nil {
