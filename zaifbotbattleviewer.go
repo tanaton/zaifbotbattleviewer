@@ -427,7 +427,7 @@ func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 	if err != nil {
 		log.Warnw("バッファの読み込みに失敗しました。", "error", err, "key", key)
 	}
-	sdatmp := sda.Duplicate()
+	sdatmp := sda.Copy()
 	defer func() {
 		if sda != nil {
 			err := streamBufferWriteProc(key, sda)
@@ -458,7 +458,7 @@ func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 				}
 			}
 		case sdch <- sdatmp:
-			sdatmp = sda.Duplicate()
+			sdatmp = sda.Copy()
 		case lpch <- oldstream.LastPrice:
 		}
 	}
@@ -550,7 +550,7 @@ func getTickerProc(ctx context.Context, wg *sync.WaitGroup, key string, tch chan
 				createTickJSONFile(p, tc)
 			}
 			old = now
-		case tch <- duplicateTicks(tcl):
+		case tch <- copyTicks(tcl):
 		}
 	}
 }
@@ -572,7 +572,7 @@ func getTicker(ctx context.Context, key string) (*Ticker, error) {
 	return &tc, err
 }
 
-func duplicateTicks(tcl []Ticker) []Ticker {
+func copyTicks(tcl []Ticker) []Ticker {
 	return append([]Ticker(nil), tcl...)
 }
 
@@ -937,7 +937,7 @@ var storeDataArrayPool = sync.Pool{
 func NewStoreDataArray() StoreDataArray {
 	return storeDataArrayPool.Get().(StoreDataArray)
 }
-func (sda StoreDataArray) Duplicate() StoreDataArray {
+func (sda StoreDataArray) Copy() StoreDataArray {
 	sda2 := NewStoreDataArray()
 	sda2 = append(sda2, sda...)
 	return sda2
