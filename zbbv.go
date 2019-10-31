@@ -1,17 +1,14 @@
 package zbbv
 
 import (
-	"bufio"
 	"compress/gzip"
 	"context"
-	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"math/rand"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,7 +21,6 @@ import (
 
 	"github.com/NYTimes/gziphandler"
 	"github.com/gorilla/websocket"
-	"github.com/tanaton/dtoa"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/crypto/acme/autocert"
@@ -92,20 +88,6 @@ type Stream struct {
 	LastPrice    LastPrice     `json:"last_price"`
 	CurrentyPair string        `json:"currency_pair"`
 }
-type StoreData struct {
-	Ask       *PriceAmount `json:"ask,omitempty"`
-	Bid       *PriceAmount `json:"bid,omitempty"`
-	Trade     *Trade       `json:"trade,omitempty"`
-	Timestamp Unixtime     `json:"ts"`
-}
-type StoreItem struct {
-	date     time.Time
-	name     string
-	nonempty bool
-	w        *bufio.Writer
-	fp       *os.File
-	buf      []byte
-}
 type Output struct {
 	Code   int
 	Header http.Header
@@ -132,7 +114,6 @@ type Ticker struct {
 	Bid    float64 `json:"bid"`    // 買気配値
 	Ask    float64 `json:"ask"`    // 売気配値
 }
-type StoreDataArray []StoreData
 type OldStreamHandler struct {
 	cp string
 	ch <-chan StoreDataArray
@@ -164,14 +145,6 @@ type ResponseInfo struct {
 	host      string
 	protocol  string
 	addr      string
-}
-type MonitoringResponseWriter struct {
-	http.ResponseWriter
-	ri   ResponseInfo
-	rich chan<- ResponseInfo
-}
-type MonitoringResponseWriterWithCloseNotify struct {
-	*MonitoringResponseWriter
 }
 
 type App struct {
@@ -276,20 +249,6 @@ func (app *App) Run(ctx context.Context) error {
 	}
 	// シャットダウン管理
 	return app.shutdown(ctx, sl...)
-}
-
-// MonitoringHandler モニタリング用ハンドラ生成
-func MonitoringHandler(h http.Handler, rich chan<- ResponseInfo) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mrw := NewMonitoringResponseWriter(w, r, rich)
-		if _, ok := w.(http.CloseNotifier); ok {
-			mrwcn := MonitoringResponseWriterWithCloseNotify{mrw}
-			h.ServeHTTP(mrwcn, r)
-		} else {
-			h.ServeHTTP(mrw, r)
-		}
-		mrw.Close()
-	})
 }
 
 func (srv Srv) startServer(wg *sync.WaitGroup) {
@@ -469,32 +428,6 @@ func (app *App) streamStoreProc(ctx context.Context, key string, rsch <-chan Str
 		case lpch <- oldstream.LastPrice:
 		}
 	}
-}
-
-func streamBufferReadProc(key string) (StoreDataArray, error) {
-	p := createBufferFilePath(key)
-	rfp, err := os.Open(p)
-	if err != nil {
-		return nil, err
-	}
-	defer rfp.Close()
-	sda := NewStoreDataArray()
-	err = gob.NewDecoder(rfp).Decode(&sda)
-	return sda, err
-}
-
-func streamBufferWriteProc(key string, sda StoreDataArray) error {
-	p := createBufferFilePath(key)
-	direrr := createDir(p)
-	if direrr != nil {
-		return direrr
-	}
-	wfp, err := os.Create(p)
-	if err != nil {
-		return err
-	}
-	defer wfp.Close()
-	return gob.NewEncoder(wfp).Encode(sda)
 }
 
 func (app *App) storeWriterProc(ctx context.Context, key string, rsch <-chan StoreData) {
@@ -740,102 +673,6 @@ func copyByteSlice(data []byte) []byte {
 	return append([]byte(nil), data...)
 }
 
-func NewStoreItem(date time.Time, name string) (*StoreItem, error) {
-	si := &StoreItem{}
-	si.buf = make([]byte, 0, 16*1024)
-	si.date = date
-	si.name = name
-	si.nonempty = false
-	si.w = bufio.NewWriterSize(ioutil.Discard, 16*1024)
-	p := si.createPathTmp()
-	if err := createDir(p); err != nil {
-		return nil, err
-	}
-	err := si.fileopen(p)
-	return si, err
-}
-
-func (si *StoreItem) WriteJsonLine(sd StoreData) error {
-	if si.nonempty {
-		si.w.Write([]byte{',', '\n'})
-	}
-	si.buf = si.buf[:0]
-	si.buf = StoreDataToJSON(si.buf, sd)
-	_, err := si.w.Write(si.buf)
-	si.nonempty = true
-	return err
-}
-
-func (si *StoreItem) Close() error {
-	si.w.Flush()
-	err := si.fp.Close()
-	si.fp = nil
-	return err
-}
-
-func (si *StoreItem) fileopen(p string) error {
-	st, err := os.Stat(p)
-	if err != nil {
-		fp, err := os.Create(p)
-		if err != nil {
-			return err
-		}
-		si.fp = fp
-		si.w.Reset(si.fp)
-		si.w.WriteByte('[')
-		si.w.Flush() // JSONの正しさを保つために書き込みしておく
-		si.nonempty = false
-	} else {
-		fp, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
-		if err != nil {
-			return err
-		}
-		si.fp = fp
-		si.w.Reset(si.fp)
-		si.nonempty = st.Size() > 2
-	}
-	return nil
-}
-
-func (si *StoreItem) nextFile(date time.Time) error {
-	si.w.WriteByte(']')
-	si.Close()
-	si.store()
-	si.date = date
-	p := si.createPathTmp()
-	return si.fileopen(p)
-}
-
-func (si *StoreItem) store() error {
-	n := si.createPathStream()
-	if err := createDir(n); err != nil {
-		return err
-	}
-	o := si.createPathTmp()
-	rfp, err := os.Open(o)
-	if err != nil {
-		return err
-	}
-	defer rfp.Close()
-	wfp, err := os.Create(n)
-	if err != nil {
-		return err
-	}
-	defer wfp.Close()
-	gz, _ := gzip.NewWriterLevel(wfp, gzip.BestSpeed)
-	defer gz.Close()
-	_, err = io.Copy(gz, rfp)
-	return err
-}
-
-func (si *StoreItem) createPathTmp() string {
-	return createStoreFilePath(si.date, si.name, "tmp")
-}
-
-func (si *StoreItem) createPathStream() string {
-	return createStoreFilePath(si.date, si.name, "stream") + ".gz"
-}
-
 func createDir(p string) error {
 	dir := filepath.Dir(p)
 	if dir == "." {
@@ -858,114 +695,6 @@ func createStoreFilePath(date time.Time, key, cate string) string {
 
 func createBufferFilePath(key string) string {
 	return filepath.Join(RootDataPath, "tmp", fmt.Sprintf("%s_buffer.gob", key))
-}
-
-func NewMonitoringResponseWriter(w http.ResponseWriter, r *http.Request, rich chan<- ResponseInfo) *MonitoringResponseWriter {
-	return &MonitoringResponseWriter{
-		ResponseWriter: w,
-		ri: ResponseInfo{
-			uri:       r.RequestURI,
-			userAgent: r.UserAgent(),
-			start:     time.Now().UTC(),
-			method:    r.Method,
-			protocol:  r.Proto,
-			host:      r.Host,
-			addr:      r.RemoteAddr,
-		},
-		rich: rich,
-	}
-}
-
-// Writeメソッドをオーバーライド
-func (mrw *MonitoringResponseWriter) Write(buf []byte) (int, error) {
-	if mrw.ri.status == 0 {
-		mrw.ri.status = http.StatusOK
-	}
-	s, err := mrw.ResponseWriter.Write(buf)
-	mrw.ri.size += s
-	return s, err
-}
-
-// WriteHeaderメソッドをオーバーライド
-func (mrw *MonitoringResponseWriter) WriteHeader(statusCode int) {
-	mrw.ri.status = statusCode
-	mrw.ResponseWriter.WriteHeader(statusCode)
-}
-
-// Close io.Closerのような感じにしたけど特に意味は無い
-func (mrw *MonitoringResponseWriter) Close() error {
-	mrw.ri.end = time.Now().UTC()
-	mrw.rich <- mrw.ri
-	return nil
-}
-
-// インターフェイスのチェック
-var _ http.ResponseWriter = &MonitoringResponseWriter{}
-var _ http.CloseNotifier = &MonitoringResponseWriterWithCloseNotify{}
-var _ http.Hijacker = &MonitoringResponseWriter{}
-var _ http.Flusher = &MonitoringResponseWriter{}
-var _ http.Pusher = &MonitoringResponseWriter{}
-
-// CloseNotify http.CloseNotifier interface
-func (mrw *MonitoringResponseWriterWithCloseNotify) CloseNotify() <-chan bool {
-	return mrw.ResponseWriter.(http.CloseNotifier).CloseNotify()
-}
-
-// Hijack implements http.Hijacker. If the underlying ResponseWriter is a
-// Hijacker, its Hijack method is returned. Otherwise an error is returned.
-func (mrw *MonitoringResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if hj, ok := mrw.ResponseWriter.(http.Hijacker); ok {
-		return hj.Hijack()
-	}
-	return nil, nil, fmt.Errorf("http.Hijacker interface is not supported")
-}
-
-// Flush http.Flusher interface
-func (mrw *MonitoringResponseWriter) Flush() {
-	flusher, ok := mrw.ResponseWriter.(http.Flusher)
-	if ok {
-		flusher.Flush()
-	}
-}
-
-// Push http.Pusher interface
-// go1.8以上が必要
-func (mrw *MonitoringResponseWriter) Push(target string, opts *http.PushOptions) error {
-	pusher, ok := mrw.ResponseWriter.(http.Pusher)
-	if ok && pusher != nil {
-		return pusher.Push(target, opts)
-	}
-	return http.ErrNotSupported
-}
-
-var storeDataArrayPool = sync.Pool{
-	New: func() interface{} {
-		return StoreDataArray(make([]StoreData, 0, StoreDataMax))
-	},
-}
-
-func NewStoreDataArray() StoreDataArray {
-	return storeDataArrayPool.Get().(StoreDataArray)
-}
-func (sda StoreDataArray) Copy() StoreDataArray {
-	sda2 := NewStoreDataArray()
-	sda2 = append(sda2, sda...)
-	return sda2
-}
-func (sda *StoreDataArray) Push(sd StoreData) {
-	*sda = append(*sda, sd)
-	if len(*sda) > StoreDataMax {
-		(*sda)[0] = StoreData{}
-		*sda = (*sda)[1:]
-	}
-}
-func (sda StoreDataArray) Len() int {
-	return len(sda)
-}
-func (sda *StoreDataArray) Close() error {
-	*sda = (*sda)[:0]
-	storeDataArrayPool.Put(*sda)
-	return nil
 }
 
 func StreamToStoreData(s, olds Stream) (StoreData, bool) {
@@ -1011,61 +740,6 @@ func (h *OldStreamHandler) getStoreData(ctx context.Context) (sda StoreDataArray
 	case sda = <-h.ch:
 	}
 	return
-}
-
-func StoreDataToJSON(buf []byte, sd StoreData) []byte {
-	buf = append(buf, '{')
-	if sd.Ask != nil {
-		buf = append(buf, `"ask":[`...)
-		buf = dtoa.DtoaSimple(buf, sd.Ask[0], -1)
-		buf = append(buf, ',')
-		buf = dtoa.DtoaSimple(buf, sd.Ask[1], -1)
-		buf = append(buf, `],`...)
-	}
-	if sd.Bid != nil {
-		buf = append(buf, `"bid":[`...)
-		buf = dtoa.DtoaSimple(buf, sd.Bid[0], -1)
-		buf = append(buf, ',')
-		buf = dtoa.DtoaSimple(buf, sd.Bid[1], -1)
-		buf = append(buf, `],`...)
-	}
-	if sd.Trade != nil {
-		buf = append(buf, `"trade":{"currenty_pair":"`...)
-		buf = append(buf, sd.Trade.CurrentyPair...)
-		buf = append(buf, `","trade_type":"`...)
-		buf = append(buf, sd.Trade.TradeType...)
-		buf = append(buf, `","price":`...)
-		buf = dtoa.DtoaSimple(buf, sd.Trade.Price, -1)
-		buf = append(buf, `,"tid":`...)
-		buf = strconv.AppendUint(buf, sd.Trade.Tid, 10)
-		buf = append(buf, `,"amount":`...)
-		buf = dtoa.DtoaSimple(buf, sd.Trade.Amount, -1)
-		buf = append(buf, `,"date":`...)
-		buf = strconv.AppendUint(buf, sd.Trade.Date, 10)
-		buf = append(buf, `},`...)
-	}
-	buf = append(buf, `"ts":`...)
-	buf = strconv.AppendInt(buf, time.Time(sd.Timestamp).Unix(), 10)
-	buf = append(buf, '}')
-	return buf
-}
-
-func StoreDataArrayToJSON(w io.Writer, sda StoreDataArray) {
-	buf := bufferPool.Get().([]byte)
-	buf = append(buf, '[')
-	for i, sd := range sda {
-		if i > 0 {
-			buf = append(buf, ',')
-		}
-		buf = StoreDataToJSON(buf, sd)
-		if len(buf) > 16*1024 {
-			w.Write(buf)
-			buf = buf[:0]
-		}
-	}
-	buf = append(buf, ']')
-	w.Write(buf)
-	bufferPool.Put(buf[:0])
 }
 
 func (h *OldStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
