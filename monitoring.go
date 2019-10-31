@@ -8,6 +8,25 @@ import (
 	"time"
 )
 
+type ResponseInfo struct {
+	uri       string
+	userAgent string
+	status    int
+	size      int
+	start     time.Time
+	end       time.Time
+	method    string
+	host      string
+	protocol  string
+	addr      string
+}
+type ResultMonitor struct {
+	err                 error
+	ResponseTimeSum     time.Duration
+	ResponseCount       uint
+	ResponseCodeOkCount uint
+	ResponseCodeNgCount uint
+}
 type MonitoringResponseWriter struct {
 	http.ResponseWriter
 	ri   ResponseInfo
