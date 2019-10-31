@@ -111,6 +111,40 @@ func StoreDataArrayToJSON(w io.Writer, sda StoreDataArray) {
 	bufferPool.Put(buf[:0])
 }
 
+func StreamToStoreData(s, olds Stream) (StoreData, bool) {
+	valid := false
+	sd := StoreData{}
+	sd.Timestamp = Unixtime(s.Timestamp)
+	if len(olds.Asks) == 0 {
+		sd.Ask = &s.Asks[0]
+		sd.Bid = &s.Bids[0]
+		sd.Trade = &s.Trades[0]
+		valid = true
+	} else {
+		switch {
+		case s.Asks[0][0] != olds.Asks[0][0],
+			s.Asks[0][1] != olds.Asks[0][1]:
+			sd.Ask = &s.Asks[0]
+			valid = true
+		}
+		switch {
+		case s.Bids[0][0] != olds.Bids[0][0],
+			s.Bids[0][1] != olds.Bids[0][1]:
+			sd.Bid = &s.Bids[0]
+			valid = true
+		}
+		switch {
+		case s.Trades[0].TradeType != olds.Trades[0].TradeType,
+			s.Trades[0].Price != olds.Trades[0].Price,
+			s.Trades[0].Tid != olds.Trades[0].Tid,
+			s.Trades[0].Amount != olds.Trades[0].Amount:
+			sd.Trade = &s.Trades[0]
+			valid = true
+		}
+	}
+	return sd, valid
+}
+
 func NewStoreItem(date time.Time, name string) (*StoreItem, error) {
 	si := &StoreItem{}
 	si.buf = make([]byte, 0, 16*1024)
