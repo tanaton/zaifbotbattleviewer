@@ -138,6 +138,7 @@ type OldStreamHandler struct {
 	ch <-chan StoreDataArray
 }
 type LastPriceHandler struct {
+	cp string
 	ch <-chan LastPrice
 }
 type GetMonitoringHandler struct {
@@ -227,7 +228,7 @@ func main() {
 		go getTickerProc(ctx, &wg, key, tch)
 		// URL設定
 		http.Handle("/api/zaif/1/oldstream/"+key, &OldStreamHandler{cp: key, ch: sdch})
-		http.Handle("/api/zaif/1/lastprice/"+key, &LastPriceHandler{ch: lpch})
+		http.Handle("/api/zaif/1/lastprice/"+key, &LastPriceHandler{cp: key, ch: lpch})
 		http.Handle("/api/zaif/1/depth/"+key, &DepthHandler{cp: key, ch: depthch})
 		http.Handle("/api/zaif/1/ticks/"+key, &TicksHandler{cp: key, ch: tch})
 	}
@@ -365,12 +366,11 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, key string, wsch 
 	wss := ZaifStremUrl + key
 	for {
 		time.Sleep(wait)
-		log.Infow("Websoket接続", "path", wss)
 		exit := func() (exit bool) {
 			ch := make(chan error, 1)
 			dialctx, dialcancel := context.WithTimeout(ctx, time.Second*7)
 			defer dialcancel()
-			defer close(ch)
+			defer close(ch) // 複数回作成される可能性があるためクローズしておく
 			con, _, dialerr := websocket.DefaultDialer.DialContext(dialctx, wss, nil)
 			if dialerr != nil {
 				// Dialが失敗した理由がよくわからない
@@ -379,6 +379,7 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, key string, wsch 
 				ch <- dialerr
 			} else {
 				defer con.Close()
+				log.Infow("Websoket接続開始", "path", wss)
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
@@ -403,7 +404,7 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, key string, wsch 
 				exit = true
 			case err := <-ch:
 				// 普通の通信異常（リトライするやつ）
-				log.Warnw("websocket通信に失敗しました。", "error", err, "url", wss)
+				log.Warnw("websocket通信が切断されました。", "error", err, "url", wss)
 				exit = false
 			}
 			return exit
@@ -537,7 +538,7 @@ func getTickerProc(ctx context.Context, wg *sync.WaitGroup, key string, tch chan
 	for {
 		select {
 		case <-ctx.Done():
-			log.Infow("getTickerProc終了")
+			log.Infow("getTickerProc終了", "key", key)
 			return
 		case now := <-t.C:
 			if now.Day() != old.Day() {
@@ -696,7 +697,7 @@ func getDepthProc(ctx context.Context, wg *sync.WaitGroup, key string, depthch c
 	for {
 		select {
 		case <-ctx.Done():
-			log.Infow("getDepthProc終了")
+			log.Infow("getDepthProc終了", "key", key)
 			return
 		case <-tc.C:
 			buf, err := getDepth(ctx, key)
@@ -1080,6 +1081,7 @@ func (h *LastPriceHandler) getLastPrice(ctx context.Context) (LastPrice, error) 
 	case <-lctx.Done():
 		return res, errors.New("timeout")
 	case res = <-h.ch:
+		log.Debugw("受信！ getLastPrice", "key", h.cp, "data", res)
 	}
 	return res, nil
 }
@@ -1105,6 +1107,7 @@ func (h *DepthHandler) getDepth(ctx context.Context) ([]byte, error) {
 	case <-c.Done():
 		return nil, errors.New("timeout")
 	case data = <-h.ch:
+		log.Debugw("受信！ getDepth", "key", h.cp)
 	}
 	return data, nil
 }
@@ -1130,6 +1133,7 @@ func (h *TicksHandler) getTick(ctx context.Context) ([]Ticker, error) {
 	case <-c.Done():
 		return nil, errors.New("timeout")
 	case tcl = <-h.ch:
+		log.Debugw("受信！ getTick", "key", h.cp)
 	}
 	return tcl, nil
 }
@@ -1155,6 +1159,7 @@ func (h *GetMonitoringHandler) getResultMonitor(ctx context.Context) (ResultMoni
 	case <-lctx.Done():
 		return res, errors.New("timeout")
 	case res = <-h.ch:
+		log.Debugw("受信！ getResultMonitor", "data", res)
 	}
 	return res, nil
 }
