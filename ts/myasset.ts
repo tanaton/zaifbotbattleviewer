@@ -66,8 +66,9 @@ type Display = {
     };
 }
 
-const svgID = "svgarea";
+const svgIDDepth = "svgdepth";
 const streamBaseURL = "wss://ws.zaif.jp/stream?currency_pair=";
+const depthUrl = "/api/zaif/1/depth/xem_jpy";
 const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
 const PriceMax = 10_000_000;
@@ -171,110 +172,6 @@ type ZaifDepth = {
     readonly bids: readonly [number, number][];
 }
 
-class MarketGraph {
-    private readonly summary_margin: Box = { top: 510, right: 10, bottom: 20, left: 60 };
-    private summary_width: number;
-    private summary_height: number;
-
-    private svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, unknown>;
-    private summary: d3.Selection<SVGGElement, Context, SVGSVGElement, unknown>;
-
-    private summary_x: d3.ScaleTime<number, number>;
-    private summary_y: d3.ScaleLinear<number, number>;
-    private summary_xAxis: d3.Axis<Date>;
-    private summary_yAxis: d3.Axis<number | { valueOf(): number; }>;
-    private summary_line: d3.Line<ChartPathData>;
-    private summary_path_d: (d: Context) => string | null;
-
-    private summary_color: d3.ScaleOrdinal<string, string>;
-    private summary_path_stroke: (d: { name: string }) => string;
-
-    private summary_data: Context[] = [{
-        name: "price",
-        values: []
-    }, {
-        name: "cap",
-        values: []
-    }, {
-        name: "volume",
-        values: []
-    }];
-
-    constructor() {
-        this.summary_width = 850 - this.summary_margin.left - this.summary_margin.right;
-        this.summary_height = 620 - this.summary_margin.top - this.summary_margin.bottom;
-
-        this.summary_x = d3.scaleTime()
-            .domain([0, 0])
-            .range([0, this.summary_width]);
-        this.summary_y = d3.scaleLinear()
-            .domain([PriceMax, PriceMin])
-            .range([this.summary_height, 0]);
-        this.summary_xAxis = d3.axisBottom<Date>(this.summary_x)
-            .tickSizeInner(-this.summary_height)
-            .tickFormat(timeFormat)
-            .tickPadding(7)
-            .ticks(5);
-        this.summary_yAxis = d3.axisLeft(this.summary_y)
-            .tickSizeInner(-this.summary_width)
-            .tickPadding(7);
-        this.summary_line = d3.line<ChartPathData>()
-            .curve(d3.curveStepAfter)
-            .x(d => this.summary_x(d.date))
-            .y(d => this.summary_y(d.data));
-        this.summary_path_d = d => this.summary_line(d.values);
-
-        this.summary_color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
-        this.summary_path_stroke = d => this.summary_color(d.name);
-
-        // オブジェクト構築
-        this.summary_color.domain(["price", "cap", "volume"]);
-
-        this.svg = d3.select("#" + svgID).append("svg");
-        this.svg
-            .attr("width", this.summary_width + this.summary_margin.left + this.summary_margin.right + 10)
-            .attr("height", this.summary_height + this.summary_margin.top + this.summary_margin.bottom + 10);
-
-        this.summary = this.svg.selectAll<SVGGElement, Context>(".summary")
-            .data(this.summary_data)
-            .enter().append("g")
-            .attr("transform", `translate(${this.summary_margin.left},${this.summary_margin.top})`)
-            .attr("class", "summary");
-
-        this.summary.append("path")				// 全体グラフ
-            .attr("class", "line")
-            .style("stroke", this.summary_path_stroke);
-
-        this.summary.append("g")				// 全体x目盛軸
-            .attr("class", "x axis")
-            .attr("transform", `translate(0,${this.summary_height})`)
-            .call(this.summary_xAxis);
-
-        this.summary.append("g")				// 全体y目盛軸
-            .attr("class", "y axis")
-            .call(this.summary_yAxis);
-    }
-    public dispose(): void {
-        const doc = document.getElementById(svgID);
-        if (doc) {
-            doc.innerHTML = "";
-        }
-    }
-    public addData(obj: readonly MarketItem[]): void {
-        for (const it of obj) {
-            this.summary_data[0].values.push({ date: it.date, data: it.price });
-            this.summary_data[1].values.push({ date: it.date, data: it.cap });
-            this.summary_data[2].values.push({ date: it.date, data: it.volume });
-        }
-    }
-    public draw(): void {
-        this.summary.select<SVGPathElement>("path").attr("d", this.summary_path_d);	// 全体グラフアップデート
-        this.summary.select<SVGGElement>(".x.axis").call(this.summary_xAxis);		// 全体x軸アップデート
-        this.summary_yAxis.tickValues(this.summary_y.domain());
-        this.summary.select<SVGGElement>(".y.axis").call(this.summary_yAxis);		// 全体x軸アップデート
-    }
-}
-
 class DepthGraph {
     private readonly depth_margin: Box = { top: 630, right: 10, bottom: 20, left: 60 };
     private depth_width: number;
@@ -352,7 +249,7 @@ class DepthGraph {
         // オブジェクト構築
         this.depth_color.domain(["asks", "bids"]);
 
-        this.svg = d3.select("#" + svgID).append("svg");
+        this.svg = d3.select("#" + svgIDDepth).append("svg");
         this.svg
             .attr("width", this.depth_width + this.depth_margin.left + this.depth_margin.right + 10)
             .attr("height", this.depth_height + this.depth_margin.top + this.depth_margin.bottom + 10);
@@ -392,7 +289,7 @@ class DepthGraph {
             window.cancelAnimationFrame(this.rid);
             this.rid = 0;
         }
-        const doc = document.getElementById(svgID);
+        const doc = document.getElementById(svgIDDepth);
         if (doc) {
             doc.innerHTML = "";
         }
@@ -441,6 +338,8 @@ class DepthGraph {
 
 class Client {
     private readonly ws: WebSocket;
+    private depth?: DepthGraph = undefined;
+    private tid: number = 0;
 
     constructor() {
         this.ws = new WebSocket(streamBaseURL + "xem_jpy");
@@ -459,12 +358,49 @@ class Client {
                 this.update(obj);
             }
         };
+        this.depth = new DepthGraph();
+        const f = () => {
+            // 1分に一回
+            this.getDepthData();
+        };
+        this.tid = window.setInterval(f, 60 * 1000);
     }
     public dispose(): void {
-        this.ws.close();
+        if (this.ws) {
+            this.ws.close();
+        }
+        if (this.tid) {
+            window.clearInterval(this.tid);
+        }
     }
     private static getDirection(action: DirectionEng): Direction {
         return action === "ask" ? "▼" : "▲";
+    }
+    private getDepthData(): void {
+        const url = depthUrl;
+        const xhr = new XMLHttpRequest();
+        xhr.ontimeout = (): void => {
+            console.error(`The request for ${url} timed out.`);
+        };
+        xhr.onload = (e): void => {
+            if (xhr.readyState === 4) {
+                if (xhr.status === 200) {
+                    if (this.depth) {
+                        this.depth.addData(JSON.parse(xhr.responseText));
+                        this.depth.updateDepthDomain();
+                        this.depth.draw();
+                    }
+                } else {
+                    console.error(xhr.statusText);
+                }
+            }
+        };
+        xhr.onerror = (e): void => {
+            console.error(xhr.statusText);
+        };
+        xhr.open("GET", url, true);
+        xhr.timeout = 5000;		// 5秒
+        xhr.send(null);
     }
     private update(obj: ZaifStream) {
         dispdata.last_trade.price = obj.last_price.price.toLocaleString();

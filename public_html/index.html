@@ -105,6 +105,9 @@
                     <li class="nav-item">
                         <a class="navbar-brand nav-link" href="/zaif/">zaifの取引情報を表示するやつ</a>
                     </li>
+                    <li v-for="currency in currencys" class="nav-item">
+                        <a class="navbar-brand nav-link" :href="currency.hash" v-cloak>{{ currency.name }}</a>
+                    </li>
                 </ul>
                 <span class="navbar-text">
                     このページは非公式です。
@@ -118,6 +121,7 @@
                     {{ asset_now }} ({{ asset_per }}%) {{ last_trade.action }}
                 </span>
             </p>
+            <div id="svgdepth"></div>
         </main>
     </div>
     <script src="/js/lib/jquery-3.4.1.min.js"></script>

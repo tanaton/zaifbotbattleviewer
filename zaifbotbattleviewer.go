@@ -1,4 +1,4 @@
-package main
+package zbbv
 
 import (
 	"bufio"
@@ -174,6 +174,10 @@ type MonitoringResponseWriterWithCloseNotify struct {
 	*MonitoringResponseWriter
 }
 
+type App struct {
+	wg sync.WaitGroup
+}
+
 var gzipContentTypeList = []string{
 	"text/html",
 	"text/css",
@@ -205,9 +209,12 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-func main() {
-	var wg sync.WaitGroup
-	ctx, exitch := startExitManageProc(context.Background(), &wg)
+func New() *App {
+	return &App{}
+}
+
+func (app *App) Run(ctx context.Context) error {
+	ctx, exitch := app.startExitManageProc(ctx)
 
 	for _, key := range zaifStremUrlList {
 		sdch := make(chan StoreDataArray)
@@ -216,16 +223,16 @@ func main() {
 		sch := make(chan Stream, 8)
 		storesch := make(chan StoreData, 256)
 		tch := make(chan []Ticker)
-		wg.Add(1)
-		go streamReaderProc(ctx, &wg, key, sch)
-		wg.Add(1)
-		go streamStoreProc(ctx, &wg, key, sch, storesch, sdch, lpch)
-		wg.Add(1)
-		go storeWriterProc(ctx, &wg, key, storesch)
-		wg.Add(1)
-		go getDepthProc(ctx, &wg, key, depthch)
-		wg.Add(1)
-		go getTickerProc(ctx, &wg, key, tch)
+		app.wg.Add(1)
+		go app.streamReaderProc(ctx, key, sch)
+		app.wg.Add(1)
+		go app.streamStoreProc(ctx, key, sch, storesch, sdch, lpch)
+		app.wg.Add(1)
+		go app.storeWriterProc(ctx, key, storesch)
+		app.wg.Add(1)
+		go app.getDepthProc(ctx, key, depthch)
+		app.wg.Add(1)
+		go app.getTickerProc(ctx, key, tch)
 		// URL設定
 		http.Handle("/api/zaif/1/oldstream/"+key, &OldStreamHandler{cp: key, ch: sdch})
 		http.Handle("/api/zaif/1/lastprice/"+key, &LastPriceHandler{cp: key, ch: lpch})
@@ -236,8 +243,8 @@ func main() {
 	monich := make(chan ResultMonitor)
 	rich := make(chan ResponseInfo, 32)
 
-	wg.Add(1)
-	go serverMonitoringProc(ctx, &wg, rich, monich)
+	app.wg.Add(1)
+	go app.serverMonitoringProc(ctx, rich, monich)
 
 	// URL設定
 	http.Handle("/api/unko.in/1/monitor", &GetMonitoringHandler{ch: monich})
@@ -247,7 +254,7 @@ func main() {
 	if err != nil {
 		exitch <- struct{}{}
 		log.Infow("サーバーハンドラの作成に失敗しました。", "error", err)
-		shutdown(ctx, &wg)
+		return app.shutdown(ctx)
 	}
 	h := MonitoringHandler(ghfunc(http.DefaultServeMux), rich)
 
@@ -264,11 +271,11 @@ func main() {
 	}
 	for _, s := range sl {
 		s := s // ローカル化
-		wg.Add(1)
-		go s.startServer(&wg)
+		app.wg.Add(1)
+		go s.startServer(&app.wg)
 	}
 	// シャットダウン管理
-	shutdown(ctx, &wg, sl...)
+	return app.shutdown(ctx, sl...)
 }
 
 // MonitoringHandler モニタリング用ハンドラ生成
@@ -300,19 +307,19 @@ func (srv Srv) startServer(wg *sync.WaitGroup) {
 	}
 }
 
-func shutdown(ctx context.Context, wg *sync.WaitGroup, sl ...Srv) {
+func (app *App) shutdown(ctx context.Context, sl ...Srv) error {
 	// シグナル等でサーバを中断する
 	<-ctx.Done()
 	// シャットダウン処理用コンテキストの用意
 	sctx, scancel := context.WithCancel(context.Background())
 	defer scancel()
 	for _, srv := range sl {
-		wg.Add(1)
+		app.wg.Add(1)
 		go func(srv *http.Server) {
 			ssctx, sscancel := context.WithTimeout(sctx, time.Second*10)
 			defer func() {
 				sscancel()
-				wg.Done()
+				app.wg.Done()
 			}()
 			err := srv.Shutdown(ssctx)
 			if err != nil {
@@ -323,15 +330,14 @@ func shutdown(ctx context.Context, wg *sync.WaitGroup, sl ...Srv) {
 		}(srv.s)
 	}
 	// サーバーの終了待機
-	wg.Wait()
-	log.Sync()
-	os.Exit(0)
+	app.wg.Wait()
+	return log.Sync()
 }
 
-func startExitManageProc(ctx context.Context, wg *sync.WaitGroup) (context.Context, chan<- struct{}) {
+func (app *App) startExitManageProc(ctx context.Context) (context.Context, chan<- struct{}) {
 	exitch := make(chan struct{}, 1)
 	ectx, cancel := context.WithCancel(ctx)
-	wg.Add(1)
+	app.wg.Add(1)
 	go func(ch <-chan struct{}) {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig,
@@ -345,7 +351,7 @@ func startExitManageProc(ctx context.Context, wg *sync.WaitGroup) (context.Conte
 		defer func() {
 			signal.Stop(sig)
 			cancel()
-			wg.Done()
+			app.wg.Done()
 		}()
 
 		select {
@@ -360,8 +366,8 @@ func startExitManageProc(ctx context.Context, wg *sync.WaitGroup) (context.Conte
 	return ectx, exitch
 }
 
-func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, key string, wsch chan<- Stream) {
-	defer wg.Done()
+func (app *App) streamReaderProc(ctx context.Context, key string, wsch chan<- Stream) {
+	defer app.wg.Done()
 	wait := time.Duration(rand.Uint64()%5000) * time.Millisecond
 	wss := ZaifStremUrl + key
 	for {
@@ -380,9 +386,9 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, key string, wsch 
 			} else {
 				defer con.Close()
 				log.Infow("Websoket接続開始", "path", wss)
-				wg.Add(1)
+				app.wg.Add(1)
 				go func() {
-					defer wg.Done()
+					defer app.wg.Done()
 					for {
 						s := Stream{}
 						err := con.ReadJSON(&s)
@@ -420,8 +426,8 @@ func streamReaderProc(ctx context.Context, wg *sync.WaitGroup, key string, wsch 
 	}
 }
 
-func streamStoreProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <-chan Stream, wsch chan<- StoreData, sdch chan<- StoreDataArray, lpch chan<- LastPrice) {
-	defer wg.Done()
+func (app *App) streamStoreProc(ctx context.Context, key string, rsch <-chan Stream, wsch chan<- StoreData, sdch chan<- StoreDataArray, lpch chan<- LastPrice) {
+	defer app.wg.Done()
 	oldstream := Stream{}
 	sda, err := streamBufferReadProc(key)
 	if err != nil {
@@ -491,8 +497,8 @@ func streamBufferWriteProc(key string, sda StoreDataArray) error {
 	return gob.NewEncoder(wfp).Encode(sda)
 }
 
-func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <-chan StoreData) {
-	defer wg.Done()
+func (app *App) storeWriterProc(ctx context.Context, key string, rsch <-chan StoreData) {
+	defer app.wg.Done()
 	old := time.Now()
 	var si *StoreItem
 	for {
@@ -528,8 +534,8 @@ func storeWriterProc(ctx context.Context, wg *sync.WaitGroup, key string, rsch <
 	}
 }
 
-func getTickerProc(ctx context.Context, wg *sync.WaitGroup, key string, tch chan<- []Ticker) {
-	defer wg.Done()
+func (app *App) getTickerProc(ctx context.Context, key string, tch chan<- []Ticker) {
+	defer app.wg.Done()
 	dir := filepath.Join(RootDataPath, "tick", key)
 	tcl := readTicks(dir)
 	old := time.Now()
@@ -632,8 +638,8 @@ func readTickData(p string) (*Ticker, error) {
 }
 
 // サーバお手軽監視用
-func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan ResponseInfo, monich chan<- ResultMonitor) {
-	defer wg.Done()
+func (app *App) serverMonitoringProc(ctx context.Context, rich <-chan ResponseInfo, monich chan<- ResultMonitor) {
+	defer app.wg.Done()
 	// logrotateの設定がめんどくせーのでアプリでやる
 	// https://github.com/uber-go/zap/blob/master/FAQ.md
 	logger := zap.New(zapcore.NewCore(
@@ -686,8 +692,8 @@ func serverMonitoringProc(ctx context.Context, wg *sync.WaitGroup, rich <-chan R
 	}
 }
 
-func getDepthProc(ctx context.Context, wg *sync.WaitGroup, key string, depthch chan<- []byte) {
-	defer wg.Done()
+func (app *App) getDepthProc(ctx context.Context, key string, depthch chan<- []byte) {
+	defer app.wg.Done()
 	data, err := getDepth(ctx, key)
 	if err != nil {
 		data = []byte{'{', '}'}
@@ -704,7 +710,7 @@ func getDepthProc(ctx context.Context, wg *sync.WaitGroup, key string, depthch c
 			if err == nil {
 				data = buf
 			}
-		case depthch <- CopyByteSlice(data):
+		case depthch <- copyByteSlice(data):
 		}
 	}
 }
@@ -728,7 +734,7 @@ func getDepth(ctx context.Context, key string) ([]byte, error) {
 	return nil, err
 }
 
-func CopyByteSlice(data []byte) []byte {
+func copyByteSlice(data []byte) []byte {
 	// 配列のゼロクリアを省略する最適化が入っているらしいので
 	// https://github.com/golang/go/issues/26252
 	return append([]byte(nil), data...)
