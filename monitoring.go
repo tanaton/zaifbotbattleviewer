@@ -39,18 +39,18 @@ type MonitoringResponseWriterWithCloseNotify struct {
 // MonitoringHandler モニタリング用ハンドラ生成
 func MonitoringHandler(h http.Handler, rich chan<- ResponseInfo) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mrw := NewMonitoringResponseWriter(w, r, rich)
+		mrw := newMonitoringResponseWriter(w, r, rich)
+		defer mrw.Close()
 		if _, ok := w.(http.CloseNotifier); ok {
 			mrwcn := MonitoringResponseWriterWithCloseNotify{mrw}
 			h.ServeHTTP(mrwcn, r)
 		} else {
 			h.ServeHTTP(mrw, r)
 		}
-		mrw.Close()
 	})
 }
 
-func NewMonitoringResponseWriter(w http.ResponseWriter, r *http.Request, rich chan<- ResponseInfo) *MonitoringResponseWriter {
+func newMonitoringResponseWriter(w http.ResponseWriter, r *http.Request, rich chan<- ResponseInfo) *MonitoringResponseWriter {
 	return &MonitoringResponseWriter{
 		ResponseWriter: w,
 		ri: ResponseInfo{
@@ -66,7 +66,7 @@ func NewMonitoringResponseWriter(w http.ResponseWriter, r *http.Request, rich ch
 	}
 }
 
-// Writeメソッドをオーバーライド
+// Write メソッドをオーバーライド
 func (mrw *MonitoringResponseWriter) Write(buf []byte) (int, error) {
 	if mrw.ri.status == 0 {
 		mrw.ri.status = http.StatusOK
@@ -76,7 +76,7 @@ func (mrw *MonitoringResponseWriter) Write(buf []byte) (int, error) {
 	return s, err
 }
 
-// WriteHeaderメソッドをオーバーライド
+// WriteHeader メソッドをオーバーライド
 func (mrw *MonitoringResponseWriter) WriteHeader(statusCode int) {
 	mrw.ri.status = statusCode
 	mrw.ResponseWriter.WriteHeader(statusCode)

@@ -44,7 +44,7 @@ func (h *OldStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		defer sda.Close()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		StoreDataArrayToJSON(w, sda)
+		storeDataArrayToJSON(w, sda)
 	} else {
 		http.NotFound(w, r)
 	}

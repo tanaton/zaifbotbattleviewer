@@ -24,6 +24,8 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+const RootDomain = "crypto.unko.in"
+
 const (
 	StoreDataMax  = 1 << 14 // 16384
 	ZaifStremUrl  = "wss://ws.zaif.jp/stream?currency_pair="
@@ -101,7 +103,7 @@ var gzipContentTypeList = []string{
 	"text/plain",
 	"application/json",
 }
-var zaifStremUrlList = []string{
+var zaifStremURLList = []string{
 	"btc_jpy",
 	"xem_jpy",
 	"mona_jpy",
@@ -132,7 +134,7 @@ func New() *App {
 func (app *App) Run(ctx context.Context) error {
 	ctx, exitch := app.startExitManageProc(ctx)
 
-	for _, key := range zaifStremUrlList {
+	for _, key := range zaifStremURLList {
 		sdch := make(chan StoreDataArray)
 		lpch := make(chan LastPrice)
 		depthch := make(chan []byte)
@@ -182,7 +184,7 @@ func (app *App) Run(ctx context.Context) error {
 		},
 		Srv{
 			s: &http.Server{Handler: h},
-			f: func(s *http.Server) error { return s.Serve(autocert.NewListener("crypto.unko.in")) },
+			f: func(s *http.Server) error { return s.Serve(autocert.NewListener(RootDomain)) },
 		},
 	}
 	for _, s := range sl {
@@ -354,7 +356,7 @@ func (app *App) streamStoreProc(ctx context.Context, key string, rsch <-chan Str
 			log.Infow("streamStoreProc終了", "key", key)
 			return
 		case s := <-rsch:
-			sd, ok := StreamToStoreData(s, oldstream)
+			sd, ok := streamToStoreData(s, oldstream)
 			oldstream = s
 			if ok {
 				sda.Push(sd)
@@ -389,7 +391,7 @@ func (app *App) storeWriterProc(ctx context.Context, key string, rsch <-chan Sto
 			date := time.Time(sd.Timestamp)
 			var err error
 			if si == nil {
-				si, err = NewStoreItem(date, key)
+				si, err = newStoreItem(date, key)
 				if err != nil {
 					log.Warnw("JSONファイル生成に失敗しました。", "error", err, "name", key)
 					break
@@ -402,9 +404,10 @@ func (app *App) storeWriterProc(ctx context.Context, key string, rsch <-chan Sto
 				}
 			}
 			old = date
-			err = si.WriteJsonLine(sd)
+			err = si.writeJsonLine(sd)
 			if err != nil {
 				log.Warnw("JSONファイル出力に失敗しました。", "error", err)
+				break
 			}
 		}
 	}

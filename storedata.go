@@ -56,7 +56,7 @@ func streamBufferWriteProc(key string, sda StoreDataArray) error {
 	return gob.NewEncoder(wfp).Encode(sda)
 }
 
-func StoreDataToJSON(buf []byte, sd StoreData) []byte {
+func storeDataToJSON(buf []byte, sd StoreData) []byte {
 	buf = append(buf, '{')
 	if sd.Ask != nil {
 		buf = append(buf, `"ask":[`...)
@@ -93,14 +93,14 @@ func StoreDataToJSON(buf []byte, sd StoreData) []byte {
 	return buf
 }
 
-func StoreDataArrayToJSON(w io.Writer, sda StoreDataArray) {
+func storeDataArrayToJSON(w io.Writer, sda StoreDataArray) {
 	buf := bufferPool.Get().([]byte)
 	buf = append(buf, '[')
 	for i, sd := range sda {
 		if i > 0 {
 			buf = append(buf, ',')
 		}
-		buf = StoreDataToJSON(buf, sd)
+		buf = storeDataToJSON(buf, sd)
 		if len(buf) > 16*1024 {
 			w.Write(buf)
 			buf = buf[:0]
@@ -111,7 +111,7 @@ func StoreDataArrayToJSON(w io.Writer, sda StoreDataArray) {
 	bufferPool.Put(buf[:0])
 }
 
-func StreamToStoreData(s, olds Stream) (StoreData, bool) {
+func streamToStoreData(s, olds Stream) (StoreData, bool) {
 	valid := false
 	sd := StoreData{}
 	sd.Timestamp = Unixtime(s.Timestamp)
@@ -145,7 +145,7 @@ func StreamToStoreData(s, olds Stream) (StoreData, bool) {
 	return sd, valid
 }
 
-func NewStoreItem(date time.Time, name string) (*StoreItem, error) {
+func newStoreItem(date time.Time, name string) (*StoreItem, error) {
 	si := &StoreItem{}
 	si.buf = make([]byte, 0, 16*1024)
 	si.date = date
@@ -160,12 +160,12 @@ func NewStoreItem(date time.Time, name string) (*StoreItem, error) {
 	return si, err
 }
 
-func (si *StoreItem) WriteJsonLine(sd StoreData) error {
+func (si *StoreItem) writeJsonLine(sd StoreData) error {
 	if si.nonempty {
 		si.w.Write([]byte{',', '\n'})
 	}
 	si.buf = si.buf[:0]
-	si.buf = StoreDataToJSON(si.buf, sd)
+	si.buf = storeDataToJSON(si.buf, sd)
 	_, err := si.w.Write(si.buf)
 	si.nonempty = true
 	return err
