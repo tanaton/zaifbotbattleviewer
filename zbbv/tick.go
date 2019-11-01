@@ -74,8 +74,8 @@ func readTicks(dir string) []Ticker {
 	tl := make([]Ticker, 0, 365)
 	match, err := filepath.Glob(filepath.Join(dir, "*.json"))
 	if len(match) > 0 && err == nil {
-		// 降順
-		sort.Slice(match, func(i, j int) bool { return match[i] > match[j] })
+		// 昇順
+		sort.Slice(match, func(i, j int) bool { return match[i] < match[j] })
 		var old ZaifTicker
 		for _, p := range match {
 			_, file := filepath.Split(p)
@@ -100,10 +100,6 @@ func readTicks(dir string) []Ticker {
 			}
 			tl = append(tl, t)
 			old = *zt
-		}
-		// 反転
-		for i, j := 0, len(tl)-1; i < j; i, j = i+1, j-1 {
-			tl[i], tl[j] = tl[j], tl[i]
 		}
 	}
 	return tl
