@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-type Ticker struct {
+type ZaifTicker struct {
 	Last   float64 `json:"last"`   // 終値
 	High   float64 `json:"high"`   // 過去24時間の高値
 	Low    float64 `json:"low"`    // 過去24時間の安値
@@ -20,7 +20,17 @@ type Ticker struct {
 	Ask    float64 `json:"ask"`    // 売気配値
 }
 
-func getTicker(ctx context.Context, key string) (*Ticker, error) {
+type Ticker struct {
+	Date   string  `json:"date"`   // 日付
+	Open   float64 `json:"open"`   // 始値
+	Close  float64 `json:"close"`  // 終値
+	High   float64 `json:"high"`   // 過去24時間の高値
+	Low    float64 `json:"low"`    // 過去24時間の安値
+	Vwap   float64 `json:"vwap"`   // 過去24時間の加重平均
+	Volume float64 `json:"volume"` // 過去24時間の出来高
+}
+
+func getZaifTicker(ctx context.Context, key string) (*ZaifTicker, error) {
 	c, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(c, http.MethodGet, ZaifTickerUrl+key, nil)
@@ -32,7 +42,7 @@ func getTicker(ctx context.Context, key string) (*Ticker, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	var tc Ticker
+	var tc ZaifTicker
 	err = json.NewDecoder(resp.Body).Decode(&tc)
 	return &tc, err
 }
@@ -41,7 +51,7 @@ func copyTicks(tcl []Ticker) []Ticker {
 	return append([]Ticker(nil), tcl...)
 }
 
-func createTickJSONFile(p string, tc *Ticker) {
+func createZaifTickJSONFile(p string, tc *ZaifTicker) {
 	direrr := createDir(p)
 	if direrr != nil {
 		log.Warnw("フォルダ作成に失敗しました。", "error", direrr, "path", p)
@@ -61,33 +71,51 @@ func createTickJSONFile(p string, tc *Ticker) {
 }
 
 func readTicks(dir string) []Ticker {
-	tcl := make([]Ticker, 0, 365)
+	tl := make([]Ticker, 0, 365)
 	match, err := filepath.Glob(filepath.Join(dir, "*.json"))
 	if len(match) > 0 && err == nil {
 		// 降順
 		sort.Slice(match, func(i, j int) bool { return match[i] > match[j] })
+		var old ZaifTicker
 		for _, p := range match {
-			tc, err := readTickData(p)
+			_, file := filepath.Split(p)
+			if len(file) > 13 {
+				break
+			}
+			zt, err := readZaifTickData(p)
 			if err != nil {
 				break
 			}
-			tcl = append(tcl, *tc)
+			if old.Last == 0 {
+				old.Last = zt.Last
+			}
+			t := Ticker{
+				Date:   file[0:8],
+				Open:   old.Last,
+				Close:  zt.Last,
+				High:   zt.High,
+				Low:    zt.Low,
+				Vwap:   zt.Vwap,
+				Volume: zt.Volume,
+			}
+			tl = append(tl, t)
+			old = *zt
 		}
 		// 反転
-		for i, j := 0, len(tcl)-1; i < j; i, j = i+1, j-1 {
-			tcl[i], tcl[j] = tcl[j], tcl[i]
+		for i, j := 0, len(tl)-1; i < j; i, j = i+1, j-1 {
+			tl[i], tl[j] = tl[j], tl[i]
 		}
 	}
-	return tcl
+	return tl
 }
 
-func readTickData(p string) (*Ticker, error) {
+func readZaifTickData(p string) (*ZaifTicker, error) {
 	fp, err := os.Open(p)
 	if err != nil {
 		return nil, err
 	}
 	defer fp.Close()
-	var tc Ticker
+	var tc ZaifTicker
 	err = json.NewDecoder(fp).Decode(&tc)
 	if err != nil {
 		return nil, err

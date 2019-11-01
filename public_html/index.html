@@ -5,7 +5,7 @@
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>（私の）暗号通貨資産の様子</title>
+    <title>資産の様子</title>
     <link rel="stylesheet" href="/css/bootstrap.css">
     <style>
         body {
@@ -92,7 +92,7 @@
 <body class="bg-light text-dark">
     <div id="container">
         <nav class="navbar fixed-top navbar-expand-lg navbar-light bg-light text-dark">
-            <span class="navbar-brand" v-cloak>（私の）暗号通貨資産の様子</span>
+            <span class="navbar-brand" v-cloak>資産の様子</span>
             <div class="collapse navbar-collapse" id="navbarText">
                 <ul class="navbar-nav mr-auto">
                     <li class="nav-item active">
@@ -103,7 +103,7 @@
                         </span>
                     </li>
                     <li class="nav-item">
-                        <a class="navbar-brand nav-link" href="/zaif/">zaifの取引情報を表示するやつ</a>
+                        <a class="navbar-brand nav-link" href="/zaif/" title="zaifの取引情報を表示するやつ">zaif取引情報</a>
                     </li>
                     <li v-for="currency in currencys" class="nav-item">
                         <a class="navbar-brand nav-link" :href="currency.hash" v-cloak>{{ currency.name }}</a>
@@ -121,6 +121,7 @@
                     {{ asset_now }} ({{ asset_per }}%) {{ last_trade.action }}
                 </span>
             </p>
+            <div id="svgcandlestick"></div>
             <div id="svgdepth"></div>
         </main>
     </div>

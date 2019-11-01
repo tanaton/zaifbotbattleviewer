@@ -103,23 +103,23 @@ func (h *DepthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TicksHandler) getTick(ctx context.Context) ([]Ticker, error) {
-	var tcl []Ticker
+	var tl []Ticker
 	c, cancel := context.WithTimeout(ctx, time.Second*3)
 	defer cancel()
 	select {
 	case <-c.Done():
 		return nil, errors.New("timeout")
-	case tcl = <-h.ch:
+	case tl = <-h.ch:
 		log.Debugw("受信！ getTick", "key", h.cp)
 	}
-	return tcl, nil
+	return tl, nil
 }
 
 func (h *TicksHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	tcl, err := h.getTick(r.Context())
+	tl, err := h.getTick(r.Context())
 	if err == nil {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		err := json.NewEncoder(w).Encode(tcl)
+		err := json.NewEncoder(w).Encode(tl)
 		if err != nil {
 			log.Warnw("JSON出力に失敗しました。", "error", err, "path", r.URL.Path)
 		}

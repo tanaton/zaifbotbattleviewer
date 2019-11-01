@@ -79,7 +79,7 @@ func (ts Unixtime) MarshalBinary() ([]byte, error) {
 	return time.Time(ts).MarshalBinary()
 }
 
-type Stream struct {
+type ZaifStream struct {
 	Asks         []PriceAmount `json:"asks"`
 	Bids         []PriceAmount `json:"bids"`
 	Trades       []Trade       `json:"trades"`
@@ -138,7 +138,7 @@ func (app *App) Run(ctx context.Context) error {
 		sdch := make(chan StoreDataArray)
 		lpch := make(chan LastPrice)
 		depthch := make(chan []byte)
-		sch := make(chan Stream, 8)
+		sch := make(chan ZaifStream, 8)
 		storesch := make(chan StoreData, 256)
 		tch := make(chan []Ticker)
 		app.wg.Add(1)
@@ -270,7 +270,7 @@ func (app *App) startExitManageProc(ctx context.Context) (context.Context, chan<
 	return ectx, exitch
 }
 
-func (app *App) streamReaderProc(ctx context.Context, key string, wsch chan<- Stream) {
+func (app *App) streamReaderProc(ctx context.Context, key string, wsch chan<- ZaifStream) {
 	defer app.wg.Done()
 	wait := time.Duration(rand.Uint64()%5000) * time.Millisecond
 	wss := ZaifStremUrl + key
@@ -294,7 +294,7 @@ func (app *App) streamReaderProc(ctx context.Context, key string, wsch chan<- St
 				go func() {
 					defer app.wg.Done()
 					for {
-						s := Stream{}
+						s := ZaifStream{}
 						err := con.ReadJSON(&s)
 						if err != nil {
 							ch <- err
@@ -330,9 +330,9 @@ func (app *App) streamReaderProc(ctx context.Context, key string, wsch chan<- St
 	}
 }
 
-func (app *App) streamStoreProc(ctx context.Context, key string, rsch <-chan Stream, wsch chan<- StoreData, sdch chan<- StoreDataArray, lpch chan<- LastPrice) {
+func (app *App) streamStoreProc(ctx context.Context, key string, rsch <-chan ZaifStream, wsch chan<- StoreData, sdch chan<- StoreDataArray, lpch chan<- LastPrice) {
 	defer app.wg.Done()
-	oldstream := Stream{}
+	oldstream := ZaifStream{}
 	sda, err := streamBufferReadProc(key)
 	if err != nil {
 		log.Warnw("バッファの読み込みに失敗しました。", "error", err, "key", key)
@@ -416,7 +416,7 @@ func (app *App) storeWriterProc(ctx context.Context, key string, rsch <-chan Sto
 func (app *App) getTickerProc(ctx context.Context, key string, tch chan<- []Ticker) {
 	defer app.wg.Done()
 	dir := filepath.Join(RootDataPath, "tick", key)
-	tcl := readTicks(dir)
+	tl := readTicks(dir)
 	old := time.Now()
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
@@ -427,16 +427,31 @@ func (app *App) getTickerProc(ctx context.Context, key string, tch chan<- []Tick
 			return
 		case now := <-t.C:
 			if now.Day() != old.Day() {
-				tc, err := getTicker(ctx, key)
+				zt, err := getZaifTicker(ctx, key)
 				if err != nil {
 					break
 				}
-				p := filepath.Join(dir, fmt.Sprintf("%s_%s.json", old.Format("20060102"), key))
-				tcl = append(tcl, *tc)
-				createTickJSONFile(p, tc)
+				date := old.Format("20060102")
+				p := filepath.Join(dir, fmt.Sprintf("%s_%s.json", date, key))
+				createZaifTickJSONFile(p, zt)
+				var open float64
+				if len(tl) > 0 {
+					open = tl[len(tl)-1].Close
+				} else {
+					open = zt.Last
+				}
+				tl = append(tl, Ticker{
+					Date:   date,
+					Open:   open,
+					Close:  zt.Last,
+					High:   zt.High,
+					Low:    zt.Low,
+					Vwap:   zt.Vwap,
+					Volume: zt.Volume,
+				})
 			}
 			old = now
-		case tch <- copyTicks(tcl):
+		case tch <- copyTicks(tl):
 		}
 	}
 }

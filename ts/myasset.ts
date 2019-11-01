@@ -67,6 +67,7 @@ type Display = {
 }
 
 const svgIDDepth = "svgdepth";
+const svgIDCandlestick = "svgcandlestick";
 const streamBaseURL = "wss://ws.zaif.jp/stream?currency_pair=";
 const depthUrl = "/api/zaif/1/depth/xem_jpy";
 const timeFormat = d3.timeFormat("%H:%M:%S");
@@ -141,9 +142,25 @@ function isZaifStream(a: any): a is ZaifStream {
     return true;
 }
 
-type ChartPathData = {
+type Tick = {
     date: Date;
     data: number;
+}
+
+type Ticks = {
+    readonly name: string;
+    values: Tick[];
+}
+
+type ZaifTick = {
+    date: Date;
+    last: number;
+    high: number;
+    low: number;
+    vwap: number;
+    volume: number;
+    bid: number;
+    ask: number;
 }
 
 type ChartDepthData = {
@@ -151,75 +168,55 @@ type ChartDepthData = {
     readonly depth: number;
 }
 
-type Context = {
-    readonly name: "price" | "cap" | "volume";
-    values: ChartPathData[];
-}
-
 type Depth = {
     readonly name: AskBid;
     values: ChartDepthData[];
 }
 
-type MarketItem = {
-    readonly date: Date;
-    readonly price: number;
-    readonly cap: number;
-    readonly volume: number;
-}
 type ZaifDepth = {
     readonly asks: readonly [number, number][];
     readonly bids: readonly [number, number][];
 }
 
-class DepthGraph {
-    private readonly depth_margin: Box = { top: 630, right: 10, bottom: 20, left: 60 };
-    private depth_width: number;
-    private depth_height: number;
+class TicksGraph {
+    private readonly margin: Box = { top: 10, right: 10, bottom: 20, left: 60 };
+    private width: number;
+    private height: number;
     private rid: number = 0;
 
     private svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, unknown>;
-    private depth: d3.Selection<SVGGElement, Depth, SVGSVGElement, unknown>;
-    private depth_area: d3.Selection<SVGGElement, Depth, SVGSVGElement, unknown>;
+    private graph: d3.Selection<SVGGElement, Ticks, SVGSVGElement, unknown>;
 
-    private depth_x: d3.ScaleLinear<number, number>;
-    private depth_y: d3.ScaleLinear<number, number>;
-    private depth_xAxis: d3.Axis<number | { valueOf(): number; }>;
-    private depth_yAxis: d3.Axis<number>;
-    private depth_line: d3.Line<ChartDepthData>;
-    private depth_path_d: (d: Depth) => string | null;
-    private depth_line_area: d3.Area<ChartDepthData>;
-    private depth_area_d: (d: Depth) => string | null;
+    private x: d3.ScaleLinear<number, number>;
+    private y: d3.ScaleLinear<number, number>;
+    private xAxis: d3.Axis<number | { valueOf(): number; }>;
+    private yAxis: d3.Axis<number>;
+    private line: d3.Line<Tick>;
+    private path_d: (d: Ticks) => string | null;
 
-    private depth_color: d3.ScaleOrdinal<string, string>;
-    private depth_path_stroke: (d: { name: string }) => string;
+    private color: d3.ScaleOrdinal<string, string>;
+    private path_stroke: (d: { name: string }) => string;
 
-    private depth_data: [Depth, Depth] = [{
-        name: "Asks",
-        values: []
-    }, {
-        name: "Bids",
-        values: []
-    }];
+    private data: Ticks[] = [{ name: "", values: [] }];
 
     constructor() {
-        this.depth_width = 850 - this.depth_margin.left - this.depth_margin.right;
-        this.depth_height = 760 - this.depth_margin.top - this.depth_margin.bottom;
+        this.width = 850 - this.margin.left - this.margin.right;
+        this.height = 260 - this.margin.top - this.margin.bottom;
 
-        this.depth_x = d3.scaleLinear()
+        this.x = d3.scaleLinear()
             .domain([0, 0])
-            .range([0, this.depth_width]);
-        this.depth_y = d3.scaleLinear()
+            .range([0, this.width]);
+        this.y = d3.scaleLinear()
             .domain([PriceMax, PriceMin])
-            .range([this.depth_height, 0]);
-        this.depth_xAxis = d3.axisBottom(this.depth_x)
-            .tickSizeOuter(-this.depth_height)
-            .tickSizeInner(-this.depth_height)
+            .range([this.height, 0]);
+        this.xAxis = d3.axisBottom(this.x)
+            .tickSizeOuter(-this.height)
+            .tickSizeInner(-this.height)
             .tickPadding(7)
             .ticks(5);
-        this.depth_yAxis = d3.axisLeft<number>(this.depth_y)
-            .tickSizeOuter(-this.depth_width)
-            .tickSizeInner(-this.depth_width)
+        this.yAxis = d3.axisLeft<number>(this.y)
+            .tickSizeOuter(-this.width)
+            .tickSizeInner(-this.width)
             .tickFormat((depth: number) => {
                 let ret;
                 if (depth >= 1000000) {
@@ -231,58 +228,179 @@ class DepthGraph {
             })
             .tickPadding(7)
             .ticks(2);
-        this.depth_line = d3.line<ChartDepthData>()
+        this.line = d3.line<Tick>()
             .curve(d3.curveStepAfter)
-            .x(d => this.depth_x(d.price))
-            .y(d => this.depth_y(d.depth));
-        this.depth_path_d = d => this.depth_line(d.values);
-        this.depth_line_area = d3.area<ChartDepthData>()
-            .curve(d3.curveStepAfter)
-            .x(d => this.depth_x(d.price))
-            .y0(() => this.depth_y(0))
-            .y1(d => this.depth_y(d.depth));
-        this.depth_area_d = d => this.depth_line_area(d.values);
+            .x(d => this.x(d.date))
+            .y(d => this.y(d.data));
+        this.path_d = d => this.line(d.values);
 
-        this.depth_color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
-        this.depth_path_stroke = d => this.depth_color(d.name);
+        this.color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
+        this.path_stroke = d => this.color(d.name);
 
         // オブジェクト構築
-        this.depth_color.domain(["asks", "bids"]);
+        this.color.domain(["a", "b", "c", "d"]);
+
+        this.svg = d3.select("#" + svgIDCandlestick).append("svg");
+        this.svg
+            .attr("width", this.width + this.margin.left + this.margin.right + 10)
+            .attr("height", this.height + this.margin.top + this.margin.bottom + 10);
+
+        this.graph = this.svg.selectAll<SVGGElement, Ticks>(".ticks")
+            .data(this.data)
+            .enter().append("g")
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+            .attr("class", "ticks");
+
+        this.graph.append("path")				// 深さグラフ
+            .attr("class", "line")
+            .style("stroke", this.path_stroke);
+
+        this.graph.append("g") 					// 深さx目盛軸
+            .attr("class", "x axis")
+            .attr("transform", `translate(0,${this.height})`)
+            .call(this.xAxis);
+
+        this.graph.append("g")					// 深さy目盛軸
+            .attr("class", "y axis")
+            .call(this.yAxis);
+    }
+    public dispose(): void {
+        if (this.rid) {
+            window.cancelAnimationFrame(this.rid);
+            this.rid = 0;
+        }
+        const doc = document.getElementById(svgIDCandlestick);
+        if (doc) {
+            doc.innerHTML = "";
+        }
+    }
+    public addData(data: ZaifDepth): void {
+
+    }
+    public static depthMaxFunc(num: number, it: ChartDepthData): number {
+        return (num > it.depth) ? num : it.depth;
+    }
+    public updateDepthDomain(): void {
+
+    }
+    public draw(): void {
+        this.graph.select<SVGPathElement>("path").attr("d", this.path_d);		// 深さグラフアップデート
+        this.graph.select<SVGGElement>(".x.axis").call(this.xAxis);			// 深さx軸アップデート
+        this.graph.select<SVGGElement>(".y.axis").call(this.yAxis); 			// 深さy軸アップデート
+    }
+}
+
+class DepthGraph {
+    private readonly margin: Box = { top: 10, right: 10, bottom: 20, left: 60 };
+    private width: number;
+    private height: number;
+    private rid: number = 0;
+
+    private svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, unknown>;
+    private graph: d3.Selection<SVGGElement, Depth, SVGSVGElement, unknown>;
+    private graph_area: d3.Selection<SVGGElement, Depth, SVGSVGElement, unknown>;
+
+    private x: d3.ScaleLinear<number, number>;
+    private y: d3.ScaleLinear<number, number>;
+    private xAxis: d3.Axis<number | { valueOf(): number; }>;
+    private yAxis: d3.Axis<number>;
+    private line: d3.Line<ChartDepthData>;
+    private path_d: (d: Depth) => string | null;
+    private line_area: d3.Area<ChartDepthData>;
+    private area_d: (d: Depth) => string | null;
+
+    private color: d3.ScaleOrdinal<string, string>;
+    private path_stroke: (d: { name: string }) => string;
+
+    private data: [Depth, Depth] = [{
+        name: "Asks",
+        values: []
+    }, {
+        name: "Bids",
+        values: []
+    }];
+
+    constructor() {
+        this.width = 850 - this.margin.left - this.margin.right;
+        this.height = 260 - this.margin.top - this.margin.bottom;
+
+        this.x = d3.scaleLinear()
+            .domain([0, 0])
+            .range([0, this.width]);
+        this.y = d3.scaleLinear()
+            .domain([PriceMax, PriceMin])
+            .range([this.height, 0]);
+        this.xAxis = d3.axisBottom(this.x)
+            .tickSizeOuter(-this.height)
+            .tickSizeInner(-this.height)
+            .tickPadding(7)
+            .ticks(5);
+        this.yAxis = d3.axisLeft<number>(this.y)
+            .tickSizeOuter(-this.width)
+            .tickSizeInner(-this.width)
+            .tickFormat((depth: number) => {
+                let ret;
+                if (depth >= 1000000) {
+                    ret = floatFormat(depth / 1000000) + "M";
+                } else {
+                    ret = ((depth / 1000) | 0) + "k";
+                }
+                return ret;
+            })
+            .tickPadding(7)
+            .ticks(2);
+        this.line = d3.line<ChartDepthData>()
+            .curve(d3.curveStepAfter)
+            .x(d => this.x(d.price))
+            .y(d => this.y(d.depth));
+        this.path_d = d => this.line(d.values);
+        this.line_area = d3.area<ChartDepthData>()
+            .curve(d3.curveStepAfter)
+            .x(d => this.x(d.price))
+            .y0(() => this.y(0))
+            .y1(d => this.y(d.depth));
+        this.area_d = d => this.line_area(d.values);
+
+        this.color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
+        this.path_stroke = d => this.color(d.name);
+
+        // オブジェクト構築
+        this.color.domain(["asks", "bids"]);
 
         this.svg = d3.select("#" + svgIDDepth).append("svg");
         this.svg
-            .attr("width", this.depth_width + this.depth_margin.left + this.depth_margin.right + 10)
-            .attr("height", this.depth_height + this.depth_margin.top + this.depth_margin.bottom + 10);
+            .attr("width", this.width + this.margin.left + this.margin.right + 10)
+            .attr("height", this.height + this.margin.top + this.margin.bottom + 10);
 
-        this.depth = this.svg.selectAll<SVGGElement, Depth>(".depth")
-            .data(this.depth_data)
+        this.graph = this.svg.selectAll<SVGGElement, Depth>(".depth")
+            .data(this.data)
             .enter().append("g")
-            .attr("transform", `translate(${this.depth_margin.left},${this.depth_margin.top})`)
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
             .attr("class", "depth");
 
-        this.depth_area = this.svg.selectAll<SVGGElement, Depth>(".depth_area")
-            .data(this.depth_data)
+        this.graph_area = this.svg.selectAll<SVGGElement, Depth>(".depth_area")
+            .data(this.data)
             .enter().append("g")
-            .attr("transform", `translate(${this.depth_margin.left},${this.depth_margin.top})`)
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
             .attr("class", "depth_area");
 
-        this.depth.append("path")				// 深さグラフ
+        this.graph.append("path")				// 深さグラフ
             .attr("class", "line")
-            .style("stroke", this.depth_path_stroke);
+            .style("stroke", this.path_stroke);
 
-        this.depth_area.append("path")			// 深さグラフ領域
+        this.graph_area.append("path")			// 深さグラフ領域
             .attr("class", "depth_area_path")
             .attr("opacity", .3)
-            .style("fill", this.depth_path_stroke);
+            .style("fill", this.path_stroke);
 
-        this.depth.append("g") 					// 深さx目盛軸
+        this.graph.append("g") 					// 深さx目盛軸
             .attr("class", "x axis")
-            .attr("transform", `translate(0,${this.depth_height})`)
-            .call(this.depth_xAxis);
+            .attr("transform", `translate(0,${this.height})`)
+            .call(this.xAxis);
 
-        this.depth.append("g")					// 深さy目盛軸
+        this.graph.append("g")					// 深さy目盛軸
             .attr("class", "y axis")
-            .call(this.depth_yAxis);
+            .call(this.yAxis);
     }
     public dispose(): void {
         if (this.rid) {
@@ -298,41 +416,35 @@ class DepthGraph {
         [data.asks, data.bids].forEach((it, i) => {
             if (it) {
                 let dep = 0;
-                this.depth_data[i].values = it.map((price: readonly [number, number]): ChartDepthData => {
+                this.data[i].values = it.map((price: readonly [number, number]): ChartDepthData => {
                     dep += price[0] * price[1];
                     return { price: price[0], depth: dep };
                 });
-                this.depth_data[i].values.unshift({ price: it[0][0], depth: 0 });
+                this.data[i].values.unshift({ price: it[0][0], depth: 0 });
             }
         });
-    }
-    public static contextMinFunc(num: number, it: ChartPathData): number {
-        return (num < it.data) ? num : it.data;
-    }
-    public static contextMaxFunc(num: number, it: ChartPathData): number {
-        return (num > it.data) ? num : it.data;
     }
     public static depthMaxFunc(num: number, it: ChartDepthData): number {
         return (num > it.depth) ? num : it.depth;
     }
     public updateDepthDomain(): void {
-        const depth_xd = this.depth_x.domain();
-        const depth_yd = this.depth_y.domain();
-        depth_xd[0] = this.depth_data[1].values.reduce((num, it) => (num < it.price) ? num : it.price, PriceMax);
-        depth_xd[1] = this.depth_data[0].values.reduce((num, it) => (num > it.price) ? num : it.price, PriceMin);
-        depth_yd[0] = 0;
-        depth_yd[1] = Math.max(
-            this.depth_data[0].values.reduce(DepthGraph.depthMaxFunc, PriceMin),
-            this.depth_data[1].values.reduce(DepthGraph.depthMaxFunc, PriceMin)
+        const xd = this.x.domain();
+        const yd = this.y.domain();
+        xd[0] = this.data[1].values.reduce((num, it) => (num < it.price) ? num : it.price, PriceMax);
+        xd[1] = this.data[0].values.reduce((num, it) => (num > it.price) ? num : it.price, PriceMin);
+        yd[0] = 0;
+        yd[1] = Math.max(
+            this.data[0].values.reduce(DepthGraph.depthMaxFunc, PriceMin),
+            this.data[1].values.reduce(DepthGraph.depthMaxFunc, PriceMin)
         );
-        this.depth_x.domain(depth_xd);
-        this.depth_y.domain(depth_yd).nice();
+        this.x.domain(xd);
+        this.y.domain(yd).nice();
     }
     public draw(): void {
-        this.depth.select<SVGPathElement>("path").attr("d", this.depth_path_d);		// 深さグラフアップデート
-        this.depth.select<SVGGElement>(".x.axis").call(this.depth_xAxis);			// 深さx軸アップデート
-        this.depth.select<SVGGElement>(".y.axis").call(this.depth_yAxis); 			// 深さy軸アップデート
-        this.depth_area.select<SVGPathElement>("path").attr("d", this.depth_area_d);// 深さグラフ領域アップデート
+        this.graph.select<SVGPathElement>("path").attr("d", this.path_d);		// 深さグラフアップデート
+        this.graph.select<SVGGElement>(".x.axis").call(this.xAxis);			// 深さx軸アップデート
+        this.graph.select<SVGGElement>(".y.axis").call(this.yAxis); 			// 深さy軸アップデート
+        this.graph_area.select<SVGPathElement>("path").attr("d", this.area_d);// 深さグラフ領域アップデート
     }
 }
 
@@ -359,11 +471,18 @@ class Client {
             }
         };
         this.depth = new DepthGraph();
-        const f = () => {
+        const getDepthData = () => {
             // 1分に一回
-            this.getDepthData();
+            Client.ajax(depthUrl, (xhr: XMLHttpRequest): void => {
+                if (this.depth) {
+                    this.depth.addData(JSON.parse(xhr.responseText));
+                    this.depth.updateDepthDomain();
+                    this.depth.draw();
+                }
+            });
         };
-        this.tid = window.setInterval(f, 60 * 1000);
+        getDepthData();
+        this.tid = window.setInterval(getDepthData, 60 * 1000);
     }
     public dispose(): void {
         if (this.ws) {
@@ -372,35 +491,12 @@ class Client {
         if (this.tid) {
             window.clearInterval(this.tid);
         }
+        if (this.depth) {
+            this.depth.dispose();
+        }
     }
     private static getDirection(action: DirectionEng): Direction {
         return action === "ask" ? "▼" : "▲";
-    }
-    private getDepthData(): void {
-        const url = depthUrl;
-        const xhr = new XMLHttpRequest();
-        xhr.ontimeout = (): void => {
-            console.error(`The request for ${url} timed out.`);
-        };
-        xhr.onload = (e): void => {
-            if (xhr.readyState === 4) {
-                if (xhr.status === 200) {
-                    if (this.depth) {
-                        this.depth.addData(JSON.parse(xhr.responseText));
-                        this.depth.updateDepthDomain();
-                        this.depth.draw();
-                    }
-                } else {
-                    console.error(xhr.statusText);
-                }
-            }
-        };
-        xhr.onerror = (e): void => {
-            console.error(xhr.statusText);
-        };
-        xhr.open("GET", url, true);
-        xhr.timeout = 5000;		// 5秒
-        xhr.send(null);
     }
     private update(obj: ZaifStream) {
         dispdata.last_trade.price = obj.last_price.price.toLocaleString();
@@ -420,7 +516,28 @@ class Client {
         document.title = dispdata.last_trade.action
             + ` ${dispdata.asset_now}`
             + ` (${dispdata.asset_per}%)`
-            + ` （私の）暗号通貨資産の様子`;
+            + ` - 資産の様子`;
+    }
+    public static ajax(url: string, func: (xhr: XMLHttpRequest) => void, ) {
+        const xhr = new XMLHttpRequest();
+        xhr.ontimeout = (): void => {
+            console.error(`The request for ${url} timed out.`);
+        };
+        xhr.onload = (e): void => {
+            if (xhr.readyState === 4) {
+                if (xhr.status === 200) {
+                    func(xhr);
+                } else {
+                    console.error(xhr.statusText);
+                }
+            }
+        };
+        xhr.onerror = (e): void => {
+            console.error(xhr.statusText);
+        };
+        xhr.open("GET", url, true);
+        xhr.timeout = 5000;		// 5秒
+        xhr.send(null);
     }
 }
 

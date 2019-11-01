@@ -111,7 +111,7 @@ func storeDataArrayToJSON(w io.Writer, sda StoreDataArray) {
 	bufferPool.Put(buf[:0])
 }
 
-func streamToStoreData(s, olds Stream) (StoreData, bool) {
+func streamToStoreData(s, olds ZaifStream) (StoreData, bool) {
 	valid := false
 	sd := StoreData{}
 	sd.Timestamp = Unixtime(s.Timestamp)
