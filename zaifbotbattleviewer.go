@@ -6,7 +6,7 @@ import (
 	"os"
 	"runtime"
 
-	zbbv "github.com/tanaton/zaifbotbattleviewer"
+	"github.com/tanaton/zaifbotbattleviewer/zbbv"
 )
 
 func main() {
