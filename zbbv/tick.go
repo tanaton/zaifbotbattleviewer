@@ -79,8 +79,8 @@ func readTicks(dir string) []Ticker {
 		var old ZaifTicker
 		for _, p := range match {
 			_, file := filepath.Split(p)
-			if len(file) > 13 {
-				break
+			if len(file) <= 13 {
+				continue
 			}
 			zt, err := readZaifTickData(p)
 			if err != nil {
