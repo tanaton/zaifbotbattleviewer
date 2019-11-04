@@ -70,6 +70,7 @@ const svgIDDepth = "svgdepth";
 const svgIDCandlestick = "svgcandlestick";
 const streamBaseURL = "wss://ws.zaif.jp/stream?currency_pair=";
 const depthUrl = "/api/zaif/1/depth/xem_jpy";
+const ticksUrl = "/api/zaif/1/ticks/xem_jpy";
 const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
 const PriceMax = 10_000_000;
@@ -142,25 +143,29 @@ function isZaifStream(a: any): a is ZaifStream {
     return true;
 }
 
+type ZaifTick = {
+    date: string;
+    open: number;
+    close: number;
+    high: number;
+    low: number;
+    vwap: number;
+    volume: number;
+}
+
 type Tick = {
     date: Date;
-    data: number;
+    open: number;
+    close: number;
+    high: number;
+    low: number;
+    vwap: number;
+    volume: number;
 }
 
 type Ticks = {
     readonly name: string;
     values: Tick[];
-}
-
-type ZaifTick = {
-    date: Date;
-    last: number;
-    high: number;
-    low: number;
-    vwap: number;
-    volume: number;
-    bid: number;
-    ask: number;
 }
 
 type ChartDepthData = {
@@ -178,89 +183,106 @@ type ZaifDepth = {
     readonly bids: readonly [number, number][];
 }
 
-class TicksGraph {
+class CandlestickGraph {
     private readonly margin: Box = { top: 10, right: 10, bottom: 20, left: 60 };
     private width: number;
     private height: number;
     private rid: number = 0;
 
     private svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, unknown>;
-    private graph: d3.Selection<SVGGElement, Ticks, SVGSVGElement, unknown>;
+    private graph_rect: d3.Selection<SVGGElement, Ticks, SVGSVGElement, unknown>;
+    private graph_highlow: d3.Selection<SVGGElement, Ticks, SVGSVGElement, unknown>;
 
-    private x: d3.ScaleLinear<number, number>;
+    private x: d3.ScaleTime<number, number>;
     private y: d3.ScaleLinear<number, number>;
-    private xAxis: d3.Axis<number | { valueOf(): number; }>;
+    private xAxis: d3.Axis<Date>;
     private yAxis: d3.Axis<number>;
-    private line: d3.Line<Tick>;
-    private path_d: (d: Ticks) => string | null;
+    private rect: d3.Area<Tick>;
+    private highlow: d3.Area<Tick>;
+    private rect_d: (d: Ticks) => string | null;
+    private highlow_d: (d: Ticks) => string | null;
 
     private color: d3.ScaleOrdinal<string, string>;
-    private path_stroke: (d: { name: string }) => string;
+    private rect_stroke: (d: Ticks, i: number) => string;
 
-    private data: Ticks[] = [{ name: "", values: [] }];
+    private data: Ticks[] = [];
 
     constructor() {
         this.width = 850 - this.margin.left - this.margin.right;
         this.height = 260 - this.margin.top - this.margin.bottom;
 
-        this.x = d3.scaleLinear()
+        this.x = d3.scaleTime()
             .domain([0, 0])
             .range([0, this.width]);
         this.y = d3.scaleLinear()
             .domain([PriceMax, PriceMin])
             .range([this.height, 0]);
-        this.xAxis = d3.axisBottom(this.x)
-            .tickSizeOuter(-this.height)
+        this.xAxis = d3.axisBottom<Date>(this.x)
             .tickSizeInner(-this.height)
+            .tickFormat(timeFormat)
             .tickPadding(7)
             .ticks(5);
         this.yAxis = d3.axisLeft<number>(this.y)
             .tickSizeOuter(-this.width)
             .tickSizeInner(-this.width)
-            .tickFormat((depth: number) => {
-                let ret;
-                if (depth >= 1000000) {
-                    ret = floatFormat(depth / 1000000) + "M";
-                } else {
-                    ret = ((depth / 1000) | 0) + "k";
-                }
-                return ret;
-            })
             .tickPadding(7)
             .ticks(2);
-        this.line = d3.line<Tick>()
+
+        this.rect = d3.area<Tick>()
             .curve(d3.curveStepAfter)
             .x(d => this.x(d.date))
-            .y(d => this.y(d.data));
-        this.path_d = d => this.line(d.values);
+            .y0(d => this.y(d.open))
+            .y1(d => this.y(d.close));
+        this.rect_d = d => this.rect(d.values);
+
+        this.highlow = d3.area<Tick>()
+            .curve(d3.curveStepAfter)
+            .x0(d => this.x(d.date))
+            .x1(d => this.x(d.date) + 1)
+            .y0(d => this.y(d.high))
+            .y1(d => this.y(d.low));
+        this.highlow_d = d => this.highlow(d.values);
 
         this.color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
-        this.path_stroke = d => this.color(d.name);
-
+        this.rect_stroke = (d, i) => {
+            console.log(d);
+            console.log(i);
+            return (d.values[i].open > d.values[i].close) ? this.color("red") : this.color("green");
+        }
         // オブジェクト構築
-        this.color.domain(["a", "b", "c", "d"]);
+        this.color.domain(["red", "green"]);
 
         this.svg = d3.select("#" + svgIDCandlestick).append("svg");
         this.svg
             .attr("width", this.width + this.margin.left + this.margin.right + 10)
             .attr("height", this.height + this.margin.top + this.margin.bottom + 10);
 
-        this.graph = this.svg.selectAll<SVGGElement, Ticks>(".ticks")
+        this.graph_rect = this.svg.selectAll<SVGGElement, Depth>(".ticks_rect")
             .data(this.data)
             .enter().append("g")
             .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
-            .attr("class", "ticks");
+            .attr("class", "ticks_rect");
 
-        this.graph.append("path")				// 深さグラフ
-            .attr("class", "line")
-            .style("stroke", this.path_stroke);
+        this.graph_highlow = this.svg.selectAll<SVGGElement, Depth>(".ticks_highlow")
+            .data(this.data)
+            .enter().append("g")
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+            .attr("class", "ticks_highlow");
 
-        this.graph.append("g") 					// 深さx目盛軸
+        this.graph_rect.append("path")			// ローソク本体グラフ領域
+            .attr("class", "ticks_rect_path")
+            .style("fill", this.rect_stroke);
+
+        this.graph_highlow.append("path")		// highlowグラフ領域
+            .attr("class", "ticks_highlow_path")
+            .style("fill", this.rect_stroke);
+
+        this.graph_rect.append("g") 			// 深さx目盛軸
             .attr("class", "x axis")
             .attr("transform", `translate(0,${this.height})`)
             .call(this.xAxis);
 
-        this.graph.append("g")					// 深さy目盛軸
+        this.graph_rect.append("g")				// 深さy目盛軸
             .attr("class", "y axis")
             .call(this.yAxis);
     }
@@ -274,19 +296,47 @@ class TicksGraph {
             doc.innerHTML = "";
         }
     }
-    public addData(data: ZaifDepth): void {
-
+    public addData(data: ZaifTick[]): void {
+        this.data.push({ name: "xem_jpy", values: [] });
+        const val = this.data[0].values;
+        for (const it of data) {
+            if (it.date.length < 8) {
+                continue;
+            }
+            val.push({
+                date: new Date(+it.date.substr(0, 4), +it.date.substr(4, 6), +it.date.substr(6)),
+                open: it.open,
+                close: it.close,
+                high: it.high,
+                low: it.low,
+                vwap: it.vwap,
+                volume: it.volume,
+            });
+        }
     }
-    public static depthMaxFunc(num: number, it: ChartDepthData): number {
-        return (num > it.depth) ? num : it.depth;
+    public static lowMinFunc(num: number, it: Tick): number {
+        return (num < it.low) ? num : it.low;
+    }
+    public static highMaxFunc(num: number, it: Tick): number {
+        return (num > it.high) ? num : it.high;
     }
     public updateDepthDomain(): void {
-
+        const xd = this.x.domain();
+        const yd = this.y.domain();
+        const data = this.data[0].values;
+        const len = data.length;
+        xd[0] = data[0].date;
+        xd[1] = data[len - 1].date;
+        yd[0] = data.reduce(CandlestickGraph.lowMinFunc, PriceMax);
+        yd[1] = data.reduce(CandlestickGraph.highMaxFunc, PriceMin);
+        this.x.domain(xd);
+        this.y.domain(yd).nice();
     }
     public draw(): void {
-        this.graph.select<SVGPathElement>("path").attr("d", this.path_d);		// 深さグラフアップデート
-        this.graph.select<SVGGElement>(".x.axis").call(this.xAxis);			// 深さx軸アップデート
-        this.graph.select<SVGGElement>(".y.axis").call(this.yAxis); 			// 深さy軸アップデート
+        this.graph_highlow.select<SVGPathElement>("path").attr("d", this.highlow_d);    // HighLowアップデート
+        this.graph_rect.select<SVGPathElement>("path").attr("d", this.rect_d);		    // ローソク本体アップデート
+        this.graph_rect.select<SVGGElement>(".x.axis").call(this.xAxis);		        // x軸アップデート
+        this.graph_rect.select<SVGGElement>(".y.axis").call(this.yAxis); 			    // y軸アップデート
     }
 }
 
@@ -450,6 +500,7 @@ class DepthGraph {
 
 class Client {
     private readonly ws: WebSocket;
+    private candlestick?: CandlestickGraph = undefined;
     private depth?: DepthGraph = undefined;
     private tid: number = 0;
 
@@ -470,6 +521,16 @@ class Client {
                 this.update(obj);
             }
         };
+
+        this.candlestick = new CandlestickGraph();
+        Client.ajax(ticksUrl, (xhr: XMLHttpRequest): void => {
+            if (this.candlestick) {
+                this.candlestick.addData(JSON.parse(xhr.responseText));
+                this.candlestick.updateDepthDomain();
+                this.candlestick.draw();
+            }
+        });
+
         this.depth = new DepthGraph();
         const getDepthData = () => {
             // 1分に一回
