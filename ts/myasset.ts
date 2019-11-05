@@ -251,7 +251,11 @@ class CandlestickGraph {
 
         this.graph_rect.append("rect")			// ローソク本体グラフ領域
             .attr("class", "ticks_rect_path")
-            .style("fill", this.rect_stroke);
+            .style("fill", this.rect_stroke)
+            .attr("x", (d, i) => this.x(d.values[i].date))
+            .attr("y", (d, i) => this.x(d.values[i].date))
+            .attr("width", (d, i) => this.x(d.values[i].date))
+            .attr("height", (d, i) => this.x(d.values[i].date));
 
         this.graph_highlow.append("path")		// highlowグラフ領域
             .attr("class", "ticks_highlow_path")
