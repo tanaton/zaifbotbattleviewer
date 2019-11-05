@@ -190,8 +190,6 @@ class CandlestickGraph {
     private rid: number = 0;
 
     private svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, unknown>;
-    private graph_rect: d3.Selection<SVGGElement, Ticks, SVGSVGElement, unknown>;
-    private graph_highlow: d3.Selection<SVGGElement, Ticks, SVGSVGElement, unknown>;
 
     private x: d3.ScaleTime<number, number>;
     private y: d3.ScaleLinear<number, number>;
@@ -199,11 +197,11 @@ class CandlestickGraph {
     private yAxis: d3.Axis<number>;
 
     private color: d3.ScaleOrdinal<string, string>;
-    private rect_stroke: (d: Ticks, i: number) => string;
+    private rect_stroke: (d: Tick, i: number) => string;
 
-    private data: Ticks[] = [];
+    private data: Tick[] = [];
 
-    private candlewidth = 20;
+    private candlewidth = 10;
 
     constructor() {
         this.width = 850 - this.margin.left - this.margin.right;
@@ -216,59 +214,26 @@ class CandlestickGraph {
             .domain([PriceMax, PriceMin])
             .range([this.height, 0]);
         this.xAxis = d3.axisBottom<Date>(this.x)
-            .tickSizeInner(-this.height)
-            .tickFormat(timeFormat)
+            .tickSizeInner(this.height)
+            .tickFormat(d3.timeFormat("%Y/%m/%d"))
             .tickPadding(7)
             .ticks(5);
         this.yAxis = d3.axisLeft<number>(this.y)
             .tickSizeOuter(-this.width)
             .tickSizeInner(-this.width)
             .tickPadding(7)
-            .ticks(2);
+            .ticks(5);
 
         this.color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
-        this.rect_stroke = (d, i) => (d.values[i].open > d.values[i].close) ? this.color("red") : this.color("green");
+        this.rect_stroke = (d, i) => (d.open > d.close) ? this.color("red") : this.color("blue");
 
         // オブジェクト構築
-        this.color.domain(["red", "green"]);
+        this.color.domain(["red", "green", "blue"]);
 
         this.svg = d3.select("#" + svgIDCandlestick).append("svg");
         this.svg
             .attr("width", this.width + this.margin.left + this.margin.right + 10)
             .attr("height", this.height + this.margin.top + this.margin.bottom + 10);
-
-        this.graph_rect = this.svg.selectAll<SVGGElement, Ticks>(".ticks_rect")
-            .data(this.data)
-            .enter().append("g")
-            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
-            .attr("class", "ticks_rect");
-
-        this.graph_highlow = this.svg.selectAll<SVGGElement, Ticks>(".ticks_highlow")
-            .data(this.data)
-            .enter().append("g")
-            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
-            .attr("class", "ticks_highlow");
-
-        this.graph_rect.append("rect")			// ローソク本体グラフ領域
-            .attr("class", "ticks_rect_path")
-            .style("fill", this.rect_stroke)
-            .attr("x", (d, i) => this.x(d.values[i].date))
-            .attr("y", (d, i) => this.x(d.values[i].date))
-            .attr("width", (d, i) => this.x(d.values[i].date))
-            .attr("height", (d, i) => this.x(d.values[i].date));
-
-        this.graph_highlow.append("path")		// highlowグラフ領域
-            .attr("class", "ticks_highlow_path")
-            .style("fill", this.rect_stroke);
-
-        this.graph_rect.append("g") 			// 深さx目盛軸
-            .attr("class", "x axis")
-            .attr("transform", `translate(0,${this.height})`)
-            .call(this.xAxis);
-
-        this.graph_rect.append("g")				// 深さy目盛軸
-            .attr("class", "y axis")
-            .call(this.yAxis);
     }
     public dispose(): void {
         if (this.rid) {
@@ -281,14 +246,16 @@ class CandlestickGraph {
         }
     }
     public addData(data: ZaifTick[]): void {
-        this.data.push({ name: "xem_jpy", values: [] });
-        const val = this.data[0].values;
+        const val = this.data;
         for (const it of data) {
             if (it.date.length < 8) {
                 continue;
             }
+            const y = parseInt(it.date.substr(0, 4), 10);
+            const m = parseInt(it.date.substr(4, 2), 10);
+            const d = parseInt(it.date.substr(6, 2), 10);
             val.push({
-                date: new Date(+it.date.substr(0, 4), +it.date.substr(4, 6), +it.date.substr(6)),
+                date: new Date(y, m - 1, d),
                 open: it.open,
                 close: it.close,
                 high: it.high,
@@ -296,6 +263,9 @@ class CandlestickGraph {
                 vwap: it.vwap,
                 volume: it.volume,
             });
+        }
+        if(val.length > 0){
+            this.candlewidth = (this.width - 30) / val.length;
         }
     }
     public static lowMinFunc(num: number, it: Tick): number {
@@ -307,7 +277,7 @@ class CandlestickGraph {
     public updateDepthDomain(): void {
         const xd = this.x.domain();
         const yd = this.y.domain();
-        const data = this.data[0].values;
+        const data = this.data;
         const len = data.length;
         xd[0] = data[0].date;
         xd[1] = data[len - 1].date;
@@ -317,8 +287,56 @@ class CandlestickGraph {
         this.y.domain(yd).nice();
     }
     public draw(): void {
-        this.graph_rect.select<SVGGElement>(".x.axis").call(this.xAxis);		        // x軸アップデート
-        this.graph_rect.select<SVGGElement>(".y.axis").call(this.yAxis); 			    // y軸アップデート
+        this.svg.selectAll<SVGGElement, Tick>(".ticks_rect")
+            .data(this.data)
+            .enter().append("rect")
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+            .style("fill", this.rect_stroke)
+            .attr("x", (d, i) => this.x(d.date) - (this.candlewidth / 2))
+            .attr("y", (d, i) => (d.open > d.close) ? this.y(d.open) : this.y(d.close))
+            .attr("width", this.candlewidth)
+            .attr("height", (d, i) => Math.abs(this.y(d.open) - this.y(d.close)));
+        this.svg.selectAll<SVGGElement, Tick>(".ticks_high")
+            .data(this.data)
+            .enter().append("line")
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+            .attr("x1", (d, i) => this.x(d.date) - (this.candlewidth / 2))
+            .attr("y1", (d, i) => this.y(d.high))
+            .attr("x2", (d, i) => this.x(d.date) + (this.candlewidth / 2))
+            .attr("y2", (d, i) => this.y(d.high))
+            .style("stroke", "black");
+        this.svg.selectAll<SVGGElement, Tick>(".ticks_low")
+            .data(this.data)
+            .enter().append("line")
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+            .attr("x1", (d, i) => this.x(d.date) - (this.candlewidth / 2))
+            .attr("y1", (d, i) => this.y(d.low))
+            .attr("x2", (d, i) => this.x(d.date) + (this.candlewidth / 2))
+            .attr("y2", (d, i) => this.y(d.low))
+            .style("stroke", "black");
+        this.svg.selectAll<SVGGElement, Tick>(".ticks_highlow")
+            .data(this.data)
+            .enter().append("line")
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+            .attr("x1", (d, i) => this.x(d.date))
+            .attr("y1", (d, i) => this.y(d.high))
+            .attr("x2", (d, i) => this.x(d.date))
+            .attr("y2", (d, i) => this.y(d.low))
+            .style("stroke", "black");
+            
+        this.svg.selectAll<SVGGElement, Tick>(".x.axis")
+            .data(this.data)
+            .enter().append("g")
+            .attr("class", "x axis")
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+            .call(this.xAxis);		        // x軸アップデート
+
+        this.svg.selectAll<SVGGElement, Tick>(".y.axis")
+            .data(this.data)
+            .enter().append("g")
+            .attr("class", "y axis")
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+            .call(this.yAxis); 			    // y軸アップデート
     }
 }
 
