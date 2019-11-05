@@ -197,19 +197,17 @@ class CandlestickGraph {
     private y: d3.ScaleLinear<number, number>;
     private xAxis: d3.Axis<Date>;
     private yAxis: d3.Axis<number>;
-    private rect: d3.Area<Tick>;
-    private highlow: d3.Area<Tick>;
-    private rect_d: (d: Ticks) => string | null;
-    private highlow_d: (d: Ticks) => string | null;
 
     private color: d3.ScaleOrdinal<string, string>;
     private rect_stroke: (d: Ticks, i: number) => string;
 
     private data: Ticks[] = [];
 
+    private candlewidth = 20;
+
     constructor() {
         this.width = 850 - this.margin.left - this.margin.right;
-        this.height = 260 - this.margin.top - this.margin.bottom;
+        this.height = 460 - this.margin.top - this.margin.bottom;
 
         this.x = d3.scaleTime()
             .domain([0, 0])
@@ -228,27 +226,9 @@ class CandlestickGraph {
             .tickPadding(7)
             .ticks(2);
 
-        this.rect = d3.area<Tick>()
-            .curve(d3.curveStepAfter)
-            .x(d => this.x(d.date))
-            .y0(d => this.y(d.open))
-            .y1(d => this.y(d.close));
-        this.rect_d = d => this.rect(d.values);
-
-        this.highlow = d3.area<Tick>()
-            .curve(d3.curveStepAfter)
-            .x0(d => this.x(d.date))
-            .x1(d => this.x(d.date) + 1)
-            .y0(d => this.y(d.high))
-            .y1(d => this.y(d.low));
-        this.highlow_d = d => this.highlow(d.values);
-
         this.color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
-        this.rect_stroke = (d, i) => {
-            console.log(d);
-            console.log(i);
-            return (d.values[i].open > d.values[i].close) ? this.color("red") : this.color("green");
-        }
+        this.rect_stroke = (d, i) => (d.values[i].open > d.values[i].close) ? this.color("red") : this.color("green");
+
         // オブジェクト構築
         this.color.domain(["red", "green"]);
 
@@ -257,19 +237,19 @@ class CandlestickGraph {
             .attr("width", this.width + this.margin.left + this.margin.right + 10)
             .attr("height", this.height + this.margin.top + this.margin.bottom + 10);
 
-        this.graph_rect = this.svg.selectAll<SVGGElement, Depth>(".ticks_rect")
+        this.graph_rect = this.svg.selectAll<SVGGElement, Ticks>(".ticks_rect")
             .data(this.data)
             .enter().append("g")
             .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
             .attr("class", "ticks_rect");
 
-        this.graph_highlow = this.svg.selectAll<SVGGElement, Depth>(".ticks_highlow")
+        this.graph_highlow = this.svg.selectAll<SVGGElement, Ticks>(".ticks_highlow")
             .data(this.data)
             .enter().append("g")
             .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
             .attr("class", "ticks_highlow");
 
-        this.graph_rect.append("path")			// ローソク本体グラフ領域
+        this.graph_rect.append("rect")			// ローソク本体グラフ領域
             .attr("class", "ticks_rect_path")
             .style("fill", this.rect_stroke);
 
@@ -333,8 +313,6 @@ class CandlestickGraph {
         this.y.domain(yd).nice();
     }
     public draw(): void {
-        this.graph_highlow.select<SVGPathElement>("path").attr("d", this.highlow_d);    // HighLowアップデート
-        this.graph_rect.select<SVGPathElement>("path").attr("d", this.rect_d);		    // ローソク本体アップデート
         this.graph_rect.select<SVGGElement>(".x.axis").call(this.xAxis);		        // x軸アップデート
         this.graph_rect.select<SVGGElement>(".y.axis").call(this.yAxis); 			    // y軸アップデート
     }
