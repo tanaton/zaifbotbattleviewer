@@ -75,6 +75,8 @@ const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
 const PriceMax = 10_000_000;
 const PriceMin = -10_000_000;
+const CurrencyNumber = 181886;
+const PurchasePrice = 12.6452;
 
 type Box = {
     readonly top: number;
@@ -163,11 +165,6 @@ type Tick = {
     volume: number;
 }
 
-type Ticks = {
-    readonly name: string;
-    values: Tick[];
-}
-
 type ChartDepthData = {
     readonly price: number;
     readonly depth: number;
@@ -191,36 +188,45 @@ class CandlestickGraph {
 
     private svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, unknown>;
 
-    private x: d3.ScaleTime<number, number>;
-    private y: d3.ScaleLinear<number, number>;
-    private xAxis: d3.Axis<Date>;
-    private yAxis: d3.Axis<number>;
+    private xCandle: d3.ScaleTime<number, number>;
+    private yCandle: d3.ScaleLinear<number, number>;
+    private yVolume: d3.ScaleLinear<number, number>;
+    private xCandleAxis: d3.Axis<Date>;
+    private yCandleAxis: d3.Axis<number>;
+    private yVolumeAxis: d3.Axis<number>;
 
     private color: d3.ScaleOrdinal<string, string>;
     private rect_stroke: (d: Tick, i: number) => string;
 
     private data: Tick[] = [];
-
     private candlewidth = 10;
 
     constructor() {
         this.width = 850 - this.margin.left - this.margin.right;
         this.height = 460 - this.margin.top - this.margin.bottom;
 
-        this.x = d3.scaleTime()
+        this.xCandle = d3.scaleTime()
             .domain([0, 0])
             .range([0, this.width]);
-        this.y = d3.scaleLinear()
+        this.yCandle = d3.scaleLinear()
             .domain([PriceMax, PriceMin])
             .range([this.height, 0]);
-        this.xAxis = d3.axisBottom<Date>(this.x)
+        this.yVolume = d3.scaleLinear()
+            .domain([PriceMax * 100, PriceMin * 100])
+            .range([this.height, 0]);
+        this.xCandleAxis = d3.axisBottom<Date>(this.xCandle)
+            .tickSizeOuter(this.height)
             .tickSizeInner(this.height)
             .tickFormat(d3.timeFormat("%Y/%m/%d"))
             .tickPadding(7)
-            .ticks(5);
-        this.yAxis = d3.axisLeft<number>(this.y)
+            .ticks(3);
+        this.yCandleAxis = d3.axisLeft<number>(this.yCandle)
             .tickSizeOuter(-this.width)
             .tickSizeInner(-this.width)
+            .tickPadding(7)
+            .ticks(5);
+
+        this.yVolumeAxis = d3.axisRight<number>(this.yVolume)
             .tickPadding(7)
             .ticks(5);
 
@@ -256,15 +262,15 @@ class CandlestickGraph {
             const d = parseInt(it.date.substr(6, 2), 10);
             val.push({
                 date: new Date(y, m - 1, d),
-                open: it.open,
-                close: it.close,
-                high: it.high,
-                low: it.low,
-                vwap: it.vwap,
+                open: it.open * CurrencyNumber,
+                close: it.close * CurrencyNumber,
+                high: it.high * CurrencyNumber,
+                low: it.low * CurrencyNumber,
+                vwap: it.vwap * CurrencyNumber,
                 volume: it.volume,
             });
         }
-        if(val.length > 0){
+        if (val.length > 0) {
             this.candlewidth = (this.width - 30) / val.length;
         }
     }
@@ -274,69 +280,92 @@ class CandlestickGraph {
     public static highMaxFunc(num: number, it: Tick): number {
         return (num > it.high) ? num : it.high;
     }
+    public static volumeMinFunc(num: number, it: Tick): number {
+        return (num < it.volume) ? num : it.volume;
+    }
+    public static volumeMaxFunc(num: number, it: Tick): number {
+        return (num > it.volume) ? num : it.volume;
+    }
     public updateDepthDomain(): void {
-        const xd = this.x.domain();
-        const yd = this.y.domain();
+        const xd_candle = this.xCandle.domain();
+        const yd_candle = this.yCandle.domain();
+        const yd_volume = this.yVolume.domain();
         const data = this.data;
         const len = data.length;
-        xd[0] = data[0].date;
-        xd[1] = data[len - 1].date;
-        yd[0] = data.reduce(CandlestickGraph.lowMinFunc, PriceMax);
-        yd[1] = data.reduce(CandlestickGraph.highMaxFunc, PriceMin);
-        this.x.domain(xd);
-        this.y.domain(yd).nice();
+        xd_candle[0] = data[0].date;
+        xd_candle[1] = data[len - 1].date;
+        yd_candle[0] = data.reduce(CandlestickGraph.lowMinFunc, PriceMax);
+        yd_candle[1] = data.reduce(CandlestickGraph.highMaxFunc, PriceMin);
+        yd_volume[0] = 0;
+        yd_volume[1] = data.reduce(CandlestickGraph.volumeMaxFunc, PriceMin * 100) * 2;
+        this.xCandle.domain(xd_candle);
+        this.yCandle.domain(yd_candle).nice();
+        this.yVolume.domain(yd_volume).nice();
     }
     public draw(): void {
+        this.svg.selectAll<SVGGElement, Tick>(".ticks_volume")
+            .data(this.data)
+            .enter().append("rect")
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+            .style("fill", "#888")
+            .attr("opacity", .3)
+            .attr("x", d => this.xCandle(d.date) - (this.candlewidth / 2))
+            .attr("y", d => this.yVolume(d.volume))
+            .attr("width", this.candlewidth)
+            .attr("height", d => Math.abs(this.yVolume(d.volume) - this.yVolume(0)));
+
         this.svg.selectAll<SVGGElement, Tick>(".ticks_rect")
             .data(this.data)
             .enter().append("rect")
             .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
             .style("fill", this.rect_stroke)
-            .attr("x", (d, i) => this.x(d.date) - (this.candlewidth / 2))
-            .attr("y", (d, i) => (d.open > d.close) ? this.y(d.open) : this.y(d.close))
+            .attr("x", d => this.xCandle(d.date) - (this.candlewidth / 2))
+            .attr("y", d => (d.open > d.close) ? this.yCandle(d.open) : this.yCandle(d.close))
             .attr("width", this.candlewidth)
-            .attr("height", (d, i) => Math.abs(this.y(d.open) - this.y(d.close)));
-        this.svg.selectAll<SVGGElement, Tick>(".ticks_high")
-            .data(this.data)
-            .enter().append("line")
-            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
-            .attr("x1", (d, i) => this.x(d.date) - (this.candlewidth / 2))
-            .attr("y1", (d, i) => this.y(d.high))
-            .attr("x2", (d, i) => this.x(d.date) + (this.candlewidth / 2))
-            .attr("y2", (d, i) => this.y(d.high))
-            .style("stroke", "black");
-        this.svg.selectAll<SVGGElement, Tick>(".ticks_low")
-            .data(this.data)
-            .enter().append("line")
-            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
-            .attr("x1", (d, i) => this.x(d.date) - (this.candlewidth / 2))
-            .attr("y1", (d, i) => this.y(d.low))
-            .attr("x2", (d, i) => this.x(d.date) + (this.candlewidth / 2))
-            .attr("y2", (d, i) => this.y(d.low))
-            .style("stroke", "black");
+            .attr("height", d => Math.abs(this.yCandle(d.open) - this.yCandle(d.close)));
+        /*
+                this.svg.selectAll<SVGGElement, Tick>(".ticks_high")
+                    .data(this.data)
+                    .enter().append("line")
+                    .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+                    .attr("x1", d => this.x(d.date) - (this.candlewidth / 2))
+                    .attr("y1", d => this.y(d.high))
+                    .attr("x2", d => this.x(d.date) + (this.candlewidth / 2))
+                    .attr("y2", d => this.y(d.high))
+                    .style("stroke", "black");
+                this.svg.selectAll<SVGGElement, Tick>(".ticks_low")
+                    .data(this.data)
+                    .enter().append("line")
+                    .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+                    .attr("x1", d => this.x(d.date) - (this.candlewidth / 2))
+                    .attr("y1", d => this.y(d.low))
+                    .attr("x2", d => this.x(d.date) + (this.candlewidth / 2))
+                    .attr("y2", d => this.y(d.low))
+                    .style("stroke", "black");
+        */
         this.svg.selectAll<SVGGElement, Tick>(".ticks_highlow")
             .data(this.data)
             .enter().append("line")
             .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
-            .attr("x1", (d, i) => this.x(d.date))
-            .attr("y1", (d, i) => this.y(d.high))
-            .attr("x2", (d, i) => this.x(d.date))
-            .attr("y2", (d, i) => this.y(d.low))
-            .style("stroke", "black");
-            
+            .attr("x1", d => this.xCandle(d.date))
+            .attr("y1", d => this.yCandle(d.high))
+            .attr("x2", d => this.xCandle(d.date))
+            .attr("y2", d => this.yCandle(d.low))
+            .style("stroke", this.rect_stroke);
+
         this.svg.selectAll<SVGGElement, Tick>(".x.axis")
-            .data(this.data)
+            .data([this.data[0]])
             .enter().append("g")
             .attr("class", "x axis")
             .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
-            .call(this.xAxis);		        // x軸アップデート
+            .call(this.xCandleAxis);		        // x軸アップデート
 
         this.svg.selectAll<SVGGElement, Tick>(".y.axis")
-            .data(this.data)
+            .data([this.data[0]])
             .enter().append("g")
             .attr("class", "y axis")
             .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
-            .call(this.yAxis); 			    // y軸アップデート
+            .call(this.yCandleAxis); 			    // y軸アップデート
     }
 }
 
@@ -610,8 +639,8 @@ const dispdata: Display = {
     },
     asset_now: "0",
     asset_per: "0",
-    currency_number: 181886,
-    purchase_price: 12.6452,
+    currency_number: CurrencyNumber,
+    purchase_price: PurchasePrice,
     currencys: {
         btc_jpy: { name: "btc/jpy", hash: "/zaif/#btc_jpy", active: "" },
         xem_jpy: { name: "xem/jpy", hash: "/zaif/#xem_jpy", active: "" },
