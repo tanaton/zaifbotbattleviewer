@@ -225,13 +225,12 @@ class CandlestickGraph {
             .tickSizeInner(-this.width)
             .tickPadding(7)
             .ticks(5);
-
         this.yVolumeAxis = d3.axisRight<number>(this.yVolume)
             .tickPadding(7)
             .ticks(5);
 
         this.color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
-        this.rect_stroke = (d, i) => (d.open > d.close) ? this.color("red") : this.color("blue");
+        this.rect_stroke = (d, i) => (d.open > d.close) ? this.color("red") : this.color("green");
 
         // オブジェクト構築
         this.color.domain(["red", "green", "blue"]);
@@ -297,53 +296,37 @@ class CandlestickGraph {
         yd_candle[0] = data.reduce(CandlestickGraph.lowMinFunc, PriceMax);
         yd_candle[1] = data.reduce(CandlestickGraph.highMaxFunc, PriceMin);
         yd_volume[0] = 0;
-        yd_volume[1] = data.reduce(CandlestickGraph.volumeMaxFunc, PriceMin * 100) * 2;
+        yd_volume[1] = data.reduce(CandlestickGraph.volumeMaxFunc, PriceMin * 100) * 3;
         this.xCandle.domain(xd_candle);
         this.yCandle.domain(yd_candle).nice();
         this.yVolume.domain(yd_volume).nice();
     }
     public draw(): void {
-        this.svg.selectAll<SVGGElement, Tick>(".ticks_volume")
+        // 取引量
+        this.svg.selectAll<SVGGElement, Tick>(".rect_volume")
             .data(this.data)
             .enter().append("rect")
             .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
-            .style("fill", "#888")
-            .attr("opacity", .3)
+            .style("fill", "#000")
+            .attr("opacity", .1)
             .attr("x", d => this.xCandle(d.date) - (this.candlewidth / 2))
             .attr("y", d => this.yVolume(d.volume))
             .attr("width", this.candlewidth)
-            .attr("height", d => Math.abs(this.yVolume(d.volume) - this.yVolume(0)));
+            .attr("height", d => Math.abs(this.yVolume(0) - this.yVolume(d.volume)));
 
-        this.svg.selectAll<SVGGElement, Tick>(".ticks_rect")
+        // ローソク本体
+        this.svg.selectAll<SVGGElement, Tick>(".rect_candle")
             .data(this.data)
             .enter().append("rect")
             .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
             .style("fill", this.rect_stroke)
             .attr("x", d => this.xCandle(d.date) - (this.candlewidth / 2))
-            .attr("y", d => (d.open > d.close) ? this.yCandle(d.open) : this.yCandle(d.close))
+            .attr("y", d => Math.min(this.yCandle(d.open), this.yCandle(d.close)))  // 画面の上の方が数値が小さい
             .attr("width", this.candlewidth)
-            .attr("height", d => Math.abs(this.yCandle(d.open) - this.yCandle(d.close)));
-        /*
-                this.svg.selectAll<SVGGElement, Tick>(".ticks_high")
-                    .data(this.data)
-                    .enter().append("line")
-                    .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
-                    .attr("x1", d => this.x(d.date) - (this.candlewidth / 2))
-                    .attr("y1", d => this.y(d.high))
-                    .attr("x2", d => this.x(d.date) + (this.candlewidth / 2))
-                    .attr("y2", d => this.y(d.high))
-                    .style("stroke", "black");
-                this.svg.selectAll<SVGGElement, Tick>(".ticks_low")
-                    .data(this.data)
-                    .enter().append("line")
-                    .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
-                    .attr("x1", d => this.x(d.date) - (this.candlewidth / 2))
-                    .attr("y1", d => this.y(d.low))
-                    .attr("x2", d => this.x(d.date) + (this.candlewidth / 2))
-                    .attr("y2", d => this.y(d.low))
-                    .style("stroke", "black");
-        */
-        this.svg.selectAll<SVGGElement, Tick>(".ticks_highlow")
+            .attr("height", d => Math.max(Math.abs(this.yCandle(d.open) - this.yCandle(d.close)), 2));
+
+        // 値動きの範囲
+        this.svg.selectAll<SVGGElement, Tick>(".line_highlow")
             .data(this.data)
             .enter().append("line")
             .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
@@ -351,7 +334,28 @@ class CandlestickGraph {
             .attr("y1", d => this.yCandle(d.high))
             .attr("x2", d => this.xCandle(d.date))
             .attr("y2", d => this.yCandle(d.low))
+            .attr("stroke-width", 2)
             .style("stroke", this.rect_stroke);
+
+        // 重心
+        this.svg.selectAll<SVGGElement, Tick>(".circle_vwap")
+            .data(this.data)
+            .enter().append("circle")
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+            .attr("cx", d => this.xCandle(d.date))
+            .attr("cy", d => this.yCandle(d.vwap))
+            .attr("r", Math.min(Math.max(this.candlewidth - 1, 1), 5))
+            .style("fill", "black");
+
+        // 損益分岐点 break even point
+        this.svg.append("line")
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+            .attr("x1", this.xCandle(this.xCandle.domain()[0]))
+            .attr("y1", this.yCandle(CurrencyNumber * PurchasePrice))
+            .attr("x2", this.xCandle(this.xCandle.domain()[1]))
+            .attr("y2", this.yCandle(CurrencyNumber * PurchasePrice))
+            .attr("stroke-width", 1)
+            .style("stroke", "#4147ba");
 
         this.svg.selectAll<SVGGElement, Tick>(".x.axis")
             .data([this.data[0]])
@@ -444,7 +448,7 @@ class DepthGraph {
         this.path_stroke = d => this.color(d.name);
 
         // オブジェクト構築
-        this.color.domain(["asks", "bids"]);
+        this.color.domain(["Asks", "Bids"]);
 
         this.svg = d3.select("#" + svgIDDepth).append("svg");
         this.svg
