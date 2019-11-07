@@ -308,11 +308,18 @@ class Graph {
     private focus_xaxis_sec: number = 120;
 
     constructor(obj: Stream) {
-        this.focus_width = 850 - this.focus_margin.left - this.focus_margin.right;
+        const div = document.getElementById(svgID);
+        let width;
+        if (div) {
+            width = div.offsetWidth;
+        } else {
+            width = 850;
+        }
+        this.focus_width = width - this.focus_margin.left - this.focus_margin.right;
         this.focus_height = 500 - this.focus_margin.top - this.focus_margin.bottom;
-        this.summary_width = 850 - this.summary_margin.left - this.summary_margin.right;
+        this.summary_width = width - this.summary_margin.left - this.summary_margin.right;
         this.summary_height = 620 - this.summary_margin.top - this.summary_margin.bottom;
-        this.depth_width = 850 - this.depth_margin.left - this.depth_margin.right;
+        this.depth_width = width - this.depth_margin.left - this.depth_margin.right;
         this.depth_height = 760 - this.depth_margin.top - this.depth_margin.bottom;
         this.ydtmp = [{
             date: obj.Date,

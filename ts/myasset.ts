@@ -202,7 +202,13 @@ class CandlestickGraph {
     private candlewidth = 10;
 
     constructor() {
-        this.width = 850 - this.margin.left - this.margin.right;
+        const div = document.getElementById(svgIDCandlestick);
+        if (div) {
+            this.width = div.offsetWidth;
+        } else {
+            this.width = 850;
+        }
+        this.width = this.width - this.margin.left - this.margin.right;
         this.height = 460 - this.margin.top - this.margin.bottom;
 
         this.xCandle = d3.scaleTime()
@@ -404,7 +410,13 @@ class DepthGraph {
     }];
 
     constructor() {
-        this.width = 850 - this.margin.left - this.margin.right;
+        const div = document.getElementById(svgIDDepth);
+        if (div) {
+            this.width = div.offsetWidth;
+        } else {
+            this.width = 850;
+        }
+        this.width = this.width - this.margin.left - this.margin.right;
         this.height = 260 - this.margin.top - this.margin.bottom;
 
         this.x = d3.scaleLinear()
