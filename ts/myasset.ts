@@ -276,7 +276,7 @@ class CandlestickGraph {
             });
         }
         if (val.length > 0) {
-            this.candlewidth = (this.width - 30) / val.length;
+            this.candlewidth = Math.ceil((this.width - 10) / val.length);
         }
     }
     public static lowMinFunc(num: number, it: Tick): number {
