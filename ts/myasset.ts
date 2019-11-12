@@ -203,11 +203,7 @@ class CandlestickGraph {
 
     constructor() {
         const div = document.getElementById(svgIDCandlestick);
-        if (div) {
-            this.width = div.offsetWidth;
-        } else {
-            this.width = 850;
-        }
+        this.width = div?.offsetWidth ?? 850;
         this.width = this.width - this.margin.left - this.margin.right;
         this.height = 460 - this.margin.top - this.margin.bottom;
 
@@ -411,11 +407,7 @@ class DepthGraph {
 
     constructor() {
         const div = document.getElementById(svgIDDepth);
-        if (div) {
-            this.width = div.offsetWidth;
-        } else {
-            this.width = 850;
-        }
+        this.width = div?.offsetWidth ?? 850;
         this.width = this.width - this.margin.left - this.margin.right;
         this.height = 260 - this.margin.top - this.margin.bottom;
 
@@ -591,15 +583,11 @@ class Client {
         this.tid = window.setInterval(getDepthData, 60 * 1000);
     }
     public dispose(): void {
-        if (this.ws) {
-            this.ws.close();
-        }
+        this.ws?.close();
         if (this.tid) {
             window.clearInterval(this.tid);
         }
-        if (this.depth) {
-            this.depth.dispose();
-        }
+        this.depth?.dispose();
     }
     private static getDirection(action: DirectionEng): Direction {
         return action === "ask" ? "▼" : "▲";

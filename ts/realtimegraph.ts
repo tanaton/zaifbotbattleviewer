@@ -309,12 +309,7 @@ class Graph {
 
     constructor(obj: Stream) {
         const div = document.getElementById(svgID);
-        let width;
-        if (div) {
-            width = div.offsetWidth;
-        } else {
-            width = 850;
-        }
+        const width = div?.offsetWidth ?? 850;
         this.focus_width = width - this.focus_margin.left - this.focus_margin.right;
         this.focus_height = 500 - this.focus_margin.top - this.focus_margin.bottom;
         this.summary_width = width - this.summary_margin.left - this.summary_margin.right;
@@ -521,34 +516,35 @@ class Graph {
         this.startTimer(focusUpdateIntervalFPS);
     }
     private startTimer(fps: number): void {
-        if (fps) {
-            this.tid = window.setInterval((): void => {
-                const data: Stream = {
-                    Name: "",
-                    Date: new Date(),
-                    Signals: {
-                        "Asks": { Data: 0 },
-                        "Bids": { Data: 0 },
-                        "LastPrice": { Data: 0 }
-                    }
-                };
-                let flag = false;
-                for (const it of this.context_data) {
-                    const val = it.values;
-                    if (val.length > 0 && data.Signals !== undefined) {
-                        data.Signals[it.name] = {
-                            Data: val[val.length - 1].data
-                        };
-                        flag = true;
-                    }
-                }
-                if (flag) {
-                    this.addContext(data);
-                    this.updateContextDomain();
-                    this.draw();
-                }
-            }, 1000 / fps);
+        if (fps <= 0) {
+            return
         }
+        this.tid = window.setInterval((): void => {
+            const data: Stream = {
+                Name: "",
+                Date: new Date(),
+                Signals: {
+                    "Asks": { Data: 0 },
+                    "Bids": { Data: 0 },
+                    "LastPrice": { Data: 0 }
+                }
+            };
+            let flag = false;
+            for (const it of this.context_data) {
+                const val = it.values;
+                if (val.length > 0 && data.Signals !== undefined) {
+                    data.Signals[it.name] = {
+                        Data: val[val.length - 1].data
+                    };
+                    flag = true;
+                }
+            }
+            if (flag) {
+                this.addContext(data);
+                this.updateContextDomain();
+                this.draw();
+            }
+        }, 1000 / fps);
     }
     private stopTimer(): void {
         if (this.tid) {
@@ -578,7 +574,7 @@ class Graph {
         let ret = false;
         for (const key in sigs) {
             if (isSignal(key) && sigs.hasOwnProperty(key) && this.datamap[key] === undefined) {
-                const data = (sigs[key] || { Data: 0 }).Data;
+                const data = sigs[key].Data ?? 0;
                 const cpd: ChartPathData = { date: date, data: data };
                 summary_color.push(key);
                 this.context_data.push({ name: key, values: [cpd] });
@@ -626,42 +622,46 @@ class Graph {
         const datestart = new Date(date.getTime() - (this.focus_xaxis_sec * 1000));
         const l = this.focus_data.length;
         const sigs = data.Signals;
+        if (!sigs) {
+            return;
+        }
         for (let i = 0; i < l; i++) {
             const fd = this.focus_data[i];
             const sd = this.summary_data[i];
             const cd = this.context_data[i];
             const key = fd.name;
-            if (sigs && sigs[key] !== undefined) {
-                const d = sigs[key].Data;
-                const cpd: ChartPathData = {
-                    date: date,
-                    data: d
-                };
-                Graph.appendData(fd, cpd, true);
-                this.draw_focus = true;
+            if (!sigs[key]) {
+                continue;
+            }
+            const d = sigs[key].Data;
+            const cpd: ChartPathData = {
+                date: date,
+                data: d
+            };
+            Graph.appendData(fd, cpd, true);
+            this.draw_focus = true;
 
-                const update = Graph.appendData(cd, cpd);
-                this.focus_data_legend[i].last_price = d;
-                // データサイズが大きくなり過ぎないように調節
-                while (fd.values.length > 1000) {
-                    fd.values.shift();
-                }
-                while ((fd.values.length > 2) && (fd.values[0].date < datestart) && (fd.values[1].date < datestart)) {
-                    fd.values.shift();
-                }
-                while (cd.values.length > 5000) {
-                    cd.values.shift();
-                }
-                if (update && sd.values.length > 250) {
-                    // contextを要約してsummaryを作る
-                    sd.values = Graph.LTTB(cd.values, 200);
-                } else if (update) {
-                    // summaryにも追加
-                    Graph.appendData(sd, cpd);
-                }
-                if (sd.values.length < 3) {
-                    this.draw_summary = true;
-                }
+            const update = Graph.appendData(cd, cpd);
+            this.focus_data_legend[i].last_price = d;
+            // データサイズが大きくなり過ぎないように調節
+            while (fd.values.length > 1000) {
+                fd.values.shift();
+            }
+            while ((fd.values.length > 2) && (fd.values[0].date < datestart) && (fd.values[1].date < datestart)) {
+                fd.values.shift();
+            }
+            while (cd.values.length > 5000) {
+                cd.values.shift();
+            }
+            if (update && sd.values.length > 250) {
+                // contextを要約してsummaryを作る
+                sd.values = Graph.LTTB(cd.values, 200);
+            } else if (update) {
+                // summaryにも追加
+                Graph.appendData(sd, cpd);
+            }
+            if (sd.values.length < 3) {
+                this.draw_summary = true;
             }
         }
         // 一定時間経過でsummary更新
@@ -671,7 +671,7 @@ class Graph {
         }
     }
     public addDepth(data: Stream): void {
-        const deps = data.Depths || {};
+        const deps = data.Depths ?? {};
         this.addDepthSub(deps.Asks, this.depth_data[0]);
         this.addDepthSub(deps.Bids, this.depth_data[1]);
     }
@@ -844,7 +844,7 @@ class Graph {
 
     // https://github.com/dgryski/go-lttb を参考に作成
     public static LTTB(data: readonly ChartPathData[], threshold: number): ChartPathData[] {
-        if (threshold >= data.length || threshold == 0) {
+        if (threshold >= data.length || threshold === 0) {
             return data as ChartPathData[];	// 無し
         }
         const abs = Math.abs;
@@ -931,7 +931,7 @@ class Client {
     }
     private static getCurrencyPair(hash: string = "#btc_jpy"): CurrencyPair {
         const cp = hash.slice(1);
-        return currency_pair_list.find(data => data === cp) || currency_pair_list[0];
+        return currency_pair_list.find(data => data === cp) ?? currency_pair_list[0];
     }
     private getWebsocketURL(): string {
         return streamBaseURL + this.currency_pair;
@@ -1025,14 +1025,10 @@ class Client {
         });
     }
     public setGraphFocusXAxis(sec: number): void {
-        if (this.graph !== undefined) {
-            this.graph.setFocusXAxis(sec);
-        }
+        this.graph?.setFocusXAxis(sec);
     }
     public setGraphFocusFPS(fps: number): void {
-        if (this.graph !== undefined) {
-            this.graph.restartTimer(fps);
-        }
+        this.graph?.restartTimer(fps);
     }
     private createGraph(obj: Stream): void {
         this.graph = new Graph(obj);
@@ -1176,8 +1172,6 @@ let cli = new Client(location.hash);
 window.addEventListener("hashchange", () => {
     dispdata.focus.xaxis.selected = focusXAxisSec;
     dispdata.focus.fps.selected = focusUpdateIntervalFPS;
-    if (cli != null) {
-        cli.dispose();
-    }
+    cli?.dispose();
     cli = new Client(location.hash);
 }, false);
