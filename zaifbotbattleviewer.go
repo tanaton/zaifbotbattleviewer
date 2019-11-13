@@ -28,7 +28,7 @@ func _main() int {
 
 	app := zbbv.New()
 	if err := app.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error:\n%s", err)
+		fmt.Fprintf(os.Stderr, "Error:%s\n", err)
 		return 1
 	}
 	return 0
