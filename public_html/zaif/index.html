@@ -4,9 +4,9 @@
 <head>
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>zaifの取引情報を表示するやつ</title>
-    <link rel="stylesheet" href="/css/bootstrap.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>zaifの取引を表示するやつ</title>
+    <link rel="stylesheet" href="/css/bootstrap.min.css">
     <style>
         body {
             font: sans-serif;
@@ -98,17 +98,18 @@
     <div id="container">
         <nav class="navbar fixed-top navbar-expand-lg navbar-light bg-light text-dark">
             <span class="navbar-brand" v-cloak>
-                zaifの取引情報を表示するやつ ({{ currency_pair.first }}/{{ currency_pair.second }})
+                zaifの取引を表示するやつ ({{ currency_pair.first }}/{{ currency_pair.second }})
             </span>
+            <span class="navbar-brand" v-cloak>
+                <span :class="last_trade.type">
+                    {{ last_trade.price }} {{ last_trade.action }}
+                </span>
+            </span>
+            <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarText">
+                <span class="navbar-toggler-icon"></span>
+            </button>
             <div class="collapse navbar-collapse" id="navbarText">
                 <ul class="navbar-nav mr-auto">
-                    <li class="nav-item active">
-                        <span class="navbar-brand">
-                            <span :class="last_trade.type" v-cloak>
-                                {{ last_trade.price }} {{ last_trade.action }}
-                            </span>
-                        </span>
-                    </li>
                     <li class="nav-item">
                         <a class="navbar-brand nav-link" href="/">資産の様子</a>
                     </li>
@@ -224,7 +225,7 @@
         </main>
     </div>
     <script src="/js/lib/jquery-3.4.1.min.js"></script>
-    <script src="/js/lib/bootstrap.js"></script>
+    <script src="/js/lib/bootstrap.min.js"></script>
     <script src="/js/realtimegraph.js"></script>
 </body>
 

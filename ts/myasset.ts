@@ -184,10 +184,8 @@ class CandlestickGraph {
     private readonly margin: Box = { top: 10, right: 10, bottom: 20, left: 60 };
     private width: number;
     private height: number;
-    private rid: number = 0;
 
     private svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, unknown>;
-
     private xCandle: d3.ScaleTime<number, number>;
     private yCandle: d3.ScaleLinear<number, number>;
     private yVolume: d3.ScaleLinear<number, number>;
@@ -232,7 +230,7 @@ class CandlestickGraph {
             .ticks(5);
 
         this.color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
-        this.rect_stroke = (d, i) => (d.open > d.close) ? this.color("red") : this.color("green");
+        this.rect_stroke = d => (d.open > d.close) ? this.color("red") : this.color("green");
 
         // オブジェクト構築
         this.color.domain(["red", "green", "blue"]);
@@ -243,10 +241,6 @@ class CandlestickGraph {
             .attr("height", this.height + this.margin.top + this.margin.bottom + 10);
     }
     public dispose(): void {
-        if (this.rid) {
-            window.cancelAnimationFrame(this.rid);
-            this.rid = 0;
-        }
         const doc = document.getElementById(svgIDCandlestick);
         if (doc) {
             doc.innerHTML = "";
@@ -379,7 +373,6 @@ class DepthGraph {
     private readonly margin: Box = { top: 10, right: 10, bottom: 20, left: 60 };
     private width: number;
     private height: number;
-    private rid: number = 0;
 
     private svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, unknown>;
     private graph: d3.Selection<SVGGElement, Depth, SVGSVGElement, unknown>;
@@ -490,10 +483,6 @@ class DepthGraph {
             .call(this.yAxis);
     }
     public dispose(): void {
-        if (this.rid) {
-            window.cancelAnimationFrame(this.rid);
-            this.rid = 0;
-        }
         const doc = document.getElementById(svgIDDepth);
         if (doc) {
             doc.innerHTML = "";
@@ -534,25 +523,36 @@ class DepthGraph {
         this.graph_area.select<SVGPathElement>("path").attr("d", this.area_d);// 深さグラフ領域アップデート
     }
 }
-
+class Timer {
+    private tid: number;
+    constructor(f: () => void, ms: number) {
+        this.tid = window.setInterval(f, ms);
+    }
+    public stop(): void {
+        if (this.tid > 0) {
+            window.clearInterval(this.tid);
+            this.tid = 0;
+        }
+    }
+}
 class Client {
     private readonly ws: WebSocket;
-    private candlestick?: CandlestickGraph = undefined;
-    private depth?: DepthGraph = undefined;
-    private tid: number = 0;
+    private candlestick: CandlestickGraph;
+    private depth: DepthGraph;
+    private timer: Timer;
 
     constructor() {
         this.ws = new WebSocket(streamBaseURL + "xem_jpy");
         this.ws.onopen = () => {
             console.log('接続しました。');
         };
-        this.ws.onerror = (error) => {
+        this.ws.onerror = error => {
             console.error(`WebSocket Error ${error}`);
         };
         this.ws.onclose = () => {
             console.log('切断しました。');
         };
-        this.ws.onmessage = (msg) => {
+        this.ws.onmessage = msg => {
             const obj = JSON.parse(msg.data);
             if (isZaifStream(obj)) {
                 this.update(obj);
@@ -561,33 +561,28 @@ class Client {
 
         this.candlestick = new CandlestickGraph();
         Client.ajax(ticksUrl, (xhr: XMLHttpRequest): void => {
-            if (this.candlestick) {
-                this.candlestick.addData(JSON.parse(xhr.responseText));
-                this.candlestick.updateDepthDomain();
-                this.candlestick.draw();
-            }
+            this.candlestick.addData(JSON.parse(xhr.responseText));
+            this.candlestick.updateDepthDomain();
+            this.candlestick.draw();
         });
 
         this.depth = new DepthGraph();
         const getDepthData = () => {
             // 1分に一回
             Client.ajax(depthUrl, (xhr: XMLHttpRequest): void => {
-                if (this.depth) {
-                    this.depth.addData(JSON.parse(xhr.responseText));
-                    this.depth.updateDepthDomain();
-                    this.depth.draw();
-                }
+                this.depth.addData(JSON.parse(xhr.responseText));
+                this.depth.updateDepthDomain();
+                this.depth.draw();
             });
         };
         getDepthData();
-        this.tid = window.setInterval(getDepthData, 60 * 1000);
+        this.timer = new Timer(getDepthData, 60 * 1000);
     }
     public dispose(): void {
         this.ws?.close();
-        if (this.tid) {
-            window.clearInterval(this.tid);
-        }
+        this.timer?.stop();
         this.depth?.dispose();
+        this.candlestick?.dispose();
     }
     private static getDirection(action: DirectionEng): Direction {
         return action === "ask" ? "▼" : "▲";
