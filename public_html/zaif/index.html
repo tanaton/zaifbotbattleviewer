@@ -11,7 +11,7 @@
         body {
             font: sans-serif;
             min-height: 75rem;
-            padding-top: 4.5rem;
+            padding-top: 5.5rem;
         }
 
         #svgarea {
@@ -126,10 +126,10 @@
             <div class="row justify-content-center">
                 <div class="col-xl-9">
                     <div class="row">
-                        <div class="col-4">
-                            <h2>取引の様子</h2>
+                        <div class="col-4 align-self-start">
+                            <h1>取引の様子</h1>
                         </div>
-                        <div class="col-4">
+                        <div class="col-4 align-self-end">
                             <div class="form-group row justify-content-end" v-cloak>
                                 <label for="staticFocusFps" class="col-sm-4 col-form-label">更新間隔</label>
                                 <select class="form-control col-sm-4" v-model="focus.fps.selected">
@@ -139,7 +139,7 @@
                                 </select>
                             </div>
                         </div>
-                        <div class="col-4">
+                        <div class="col-4 align-self-end">
                             <div class="form-group row justify-content-end" v-cloak>
                                 <label for="staticFocusTime" class="col-sm-4 col-form-label">表示時間</label>
                                 <select class="form-control col-sm-4" v-model="focus.xaxis.selected">
