@@ -116,26 +116,23 @@
                         <a class="navbar-brand nav-link" :href="currency.hash" v-cloak>{{ currency.name }}</a>
                     </li>
                 </ul>
-                <span class="navbar-text">
-                    このページは非公式です。
-                </span>
             </div>
         </nav>
         <main class="container" role="main">
             <h1>資産の様子</h1>
             <p class="lead">資産の変動を記録していくサイトです。</p>
             <hr>
-            <h2 v-cloak>現在資産 (jpy)</h2>
+            <h2 v-cloak>現在 (jpy)</h2>
             <p>
                 <span id="last-trade" :class="last_trade.type" v-cloak>
                     {{ asset_now }} ({{ asset_per }}%) {{ last_trade.action }}
                 </span>
             </p>
             <hr>
-            <h2>資産変動の様子</h2>
+            <h2>変動の様子</h2>
             <div id="svgcandlestick"></div>
             <hr>
-            <h2>近場の壁</h2>
+            <h2>壁の様子</h2>
             <div id="svgdepth"></div>
         </main>
     </div>

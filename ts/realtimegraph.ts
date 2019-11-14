@@ -241,13 +241,12 @@ class Graph {
     private readonly focus_margin: Box = { top: 30, right: 10, bottom: 20, left: 60 };
     private focus_width: number;
     private focus_height: number;
-    private readonly summary_margin: Box = { top: 510, right: 10, bottom: 20, left: 60 };
+    private readonly summary_margin: Box = { top: 550, right: 10, bottom: 20, left: 60 };
     private summary_width: number;
     private summary_height: number;
-    private readonly depth_margin: Box = { top: 630, right: 10, bottom: 20, left: 60 };
+    private readonly depth_margin: Box = { top: 670, right: 10, bottom: 20, left: 60 };
     private depth_width: number;
     private depth_height: number;
-    private drawing: boolean = true;
     private tid: number = 0;
     private rid: number = 0;
 
@@ -311,11 +310,11 @@ class Graph {
         const div = document.getElementById(svgID);
         const width = div?.offsetWidth ?? 850;
         this.focus_width = width - this.focus_margin.left - this.focus_margin.right;
-        this.focus_height = 500 - this.focus_margin.top - this.focus_margin.bottom;
+        this.focus_height = 540 - this.focus_margin.top - this.focus_margin.bottom;
         this.summary_width = width - this.summary_margin.left - this.summary_margin.right;
-        this.summary_height = 620 - this.summary_margin.top - this.summary_margin.bottom;
+        this.summary_height = 660 - this.summary_margin.top - this.summary_margin.bottom;
         this.depth_width = width - this.depth_margin.left - this.depth_margin.right;
-        this.depth_height = 760 - this.depth_margin.top - this.depth_margin.bottom;
+        this.depth_height = 820 - this.depth_margin.top - this.depth_margin.bottom;
         this.ydtmp = [{
             date: obj.Date,
             data: PriceMax
@@ -541,9 +540,8 @@ class Graph {
             }
             if (flag) {
                 this.addContext(data);
-                this.updateContextDomain();
-                this.draw();
             }
+            this.draw();
         }, 1000 / fps);
     }
     private stopTimer(): void {
@@ -641,7 +639,7 @@ class Graph {
             Graph.appendData(fd, cpd, true);
             this.draw_focus = true;
 
-            const update = Graph.appendData(cd, cpd);
+            const update_cd = Graph.appendData(cd, cpd);
             this.focus_data_legend[i].last_price = d;
             // データサイズが大きくなり過ぎないように調節
             while (fd.values.length > 1000) {
@@ -650,13 +648,13 @@ class Graph {
             while ((fd.values.length > 2) && (fd.values[0].date < datestart) && (fd.values[1].date < datestart)) {
                 fd.values.shift();
             }
-            while (cd.values.length > 5000) {
+            while (cd.values.length > 16000) {
                 cd.values.shift();
             }
-            if (update && sd.values.length > 250) {
+            if (update_cd && sd.values.length > 250) {
                 // contextを要約してsummaryを作る
                 sd.values = Graph.LTTB(cd.values, 200);
-            } else if (update) {
+            } else if (update_cd) {
                 // summaryにも追加
                 Graph.appendData(sd, cpd);
             }
@@ -692,15 +690,11 @@ class Graph {
     public static contextMaxFunc(num: number, it: ChartPathData): number {
         return (num > it.data) ? num : it.data;
     }
-    public updateContextDomain(all = false): void {
+    public updateFocusDomain(all = false): void {
         const date = new Date();
         const datestart = new Date(date.getTime() - (this.focus_xaxis_sec * 1000));
         const focus_xd = [datestart, date];
-        const summary_xd = this.summary_x.domain();
-        const summary_yd = this.summary_y.domain();
         const ydtmp = this.ydtmp;
-        summary_xd[0] = date;
-        summary_xd[1] = date;
 
         // 縦軸の値の幅を設定
         if (this.focus_domain_yaxis_update === false && all === false) {
@@ -731,6 +725,17 @@ class Graph {
                 return (num > data) ? num : data;
             }, PriceMin);
         }
+        this.focus_domain_yaxis_update = false;
+        this.focus_x.domain(focus_xd);
+        this.focus_y.domain([ydtmp[0].data, ydtmp[1].data]).nice();
+    }
+    public updateSummaryDomain(all = false): void {
+        const date = new Date();
+        const summary_xd = this.summary_x.domain();
+        const summary_yd = this.summary_y.domain();
+        summary_xd[0] = date;
+        summary_xd[1] = date;
+
         if (all) {
             for (const cd of this.summary_data) {
                 summary_yd[0] = cd.values.reduce(Graph.contextMinFunc, summary_yd[0]);
@@ -757,11 +762,7 @@ class Graph {
                 }
             }
         }
-
-        this.focus_domain_yaxis_update = false;
-        this.focus_x.domain(focus_xd);
         this.summary_x.domain(summary_xd);
-        this.focus_y.domain([ydtmp[0].data, ydtmp[1].data]).nice();
         this.summary_y.domain(summary_yd).nice();
     }
     public static depthMaxFunc(num: number, it: ChartDepthData): number {
@@ -810,17 +811,17 @@ class Graph {
             this.draw_summary = true;
             this.draw_depth = true;
         }
-        if (this.drawing) {
-            this.drawing = false;
+        if (this.rid === 0) {
             this.rid = window.requestAnimationFrame((): void => {
                 this.drawsub();
+                this.rid = 0;
             });
         }
     }
     private drawsub(): void {
-        this.drawing = true;
         if (this.draw_focus) {
             this.draw_focus = false;
+            this.updateFocusDomain();
             this.focus.select<SVGPathElement>("path").attr("d", this.focus_path_d);		// 拡大グラフアップデート
             this.focus_legend.select<SVGTextElement>(".focus-legend-text").text(this.focus_legend_update);
             this.focus.select<SVGGElement>(".x.axis").call(this.focus_xAxis);			// 拡大x軸アップデート
@@ -828,6 +829,7 @@ class Graph {
         }
         if (this.draw_summary) {
             this.draw_summary = false;
+            this.updateSummaryDomain();
             this.summary.select<SVGPathElement>("path").attr("d", this.summary_path_d);	// 全体グラフアップデート
             this.summary.select<SVGGElement>(".x.axis").call(this.summary_xAxis);		// 全体x軸アップデート
             this.summary_yAxis.tickValues(this.summary_y.domain());
@@ -835,6 +837,7 @@ class Graph {
         }
         if (this.draw_depth) {
             this.draw_depth = false;
+            this.updateDepthDomain();
             this.depth.select<SVGPathElement>("path").attr("d", this.depth_path_d);		// 深さグラフアップデート
             this.depth.select<SVGGElement>(".x.axis").call(this.depth_xAxis);			// 深さx軸アップデート
             this.depth.select<SVGGElement>(".y.axis").call(this.depth_yAxis); 			// 深さy軸アップデート
@@ -924,10 +927,8 @@ class Client {
     }
     public dispose(): void {
         this.ws.close();
-        if (this.graph !== undefined) {
-            this.graph.dispose();
-            this.graph = undefined;
-        }
+        this.graph?.dispose();
+        this.graph = undefined;
     }
     private static getCurrencyPair(hash: string = "#btc_jpy"): CurrencyPair {
         const cp = hash.slice(1);
@@ -1037,9 +1038,6 @@ class Client {
         if (this.graph !== undefined) {
             this.graph.addContext(obj);
             this.graph.addDepth(obj);
-            this.graph.updateContextDomain();
-            this.graph.updateDepthDomain();
-            this.graph.draw();
         }
     }
     private loadHistory(): void {
@@ -1105,7 +1103,8 @@ class Client {
         }
         if (ask !== undefined && bid !== undefined && trade !== undefined && this.graph) {
             this.graph.sortContext();
-            this.graph.updateContextDomain(true);
+            this.graph.updateFocusDomain(true);
+            this.graph.updateSummaryDomain(true);
             this.graph.draw(true);
         }
     }

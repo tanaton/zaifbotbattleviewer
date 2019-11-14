@@ -153,10 +153,12 @@
                     <div id="svgarea"></div>
                 </div>
                 <div class="col-xl-3">
+                    <h2>取引履歴</h2>
                     <span v-cloak>1{{ currency_pair.first }}の現在価格 ({{ currency_pair.second }})</span>
                     <p>
-                        <span id="last-trade" :class="last_trade.type" v-cloak>{{ last_trade.price }}
-                            {{ last_trade.action }}</span>
+                        <span id="last-trade" :class="last_trade.type" v-cloak>
+                            {{ last_trade.price }} {{ last_trade.action }}
+                        </span>
                     </p>
                     <div class="table-responsive">
                         <table class="table table-sm table-striped table-hover" v-cloak>
