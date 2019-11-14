@@ -71,7 +71,6 @@ const svgIDCandlestick = "svgcandlestick";
 const streamBaseURL = "wss://ws.zaif.jp/stream?currency_pair=";
 const depthUrl = "/api/zaif/1/depth/xem_jpy";
 const ticksUrl = "/api/zaif/1/ticks/xem_jpy";
-const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
 const PriceMax = 10_000_000;
 const PriceMin = -10_000_000;
