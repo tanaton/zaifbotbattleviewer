@@ -74,8 +74,8 @@ const ticksUrl = "/api/zaif/1/ticks/xem_jpy";
 const floatFormat = d3.format(".1f");
 const PriceMax = 10_000_000;
 const PriceMin = -10_000_000;
-const CurrencyNumber = 181886;
-const PurchasePrice = 12.6452;
+const CurrencyNumber = 181_886;
+const PurchasePrice = 2_300_000 / CurrencyNumber;
 
 type Box = {
     readonly top: number;

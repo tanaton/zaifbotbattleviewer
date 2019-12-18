@@ -651,12 +651,14 @@ class Graph {
             while (cd.values.length > 16000) {
                 cd.values.shift();
             }
-            if (update_cd && sd.values.length > 250) {
-                // contextを要約してsummaryを作る
-                sd.values = Graph.LTTB(cd.values, 200);
-            } else if (update_cd) {
-                // summaryにも追加
-                Graph.appendData(sd, cpd);
+            if (update_cd) {
+                if (sd.values.length > 250) {
+                    // contextを要約してsummaryを作る
+                    sd.values = Graph.LTTB(cd.values, 200);
+                } else {
+                    // summaryにも追加
+                    Graph.appendData(sd, cpd);
+                }
             }
             if (sd.values.length < 3) {
                 this.draw_summary = true;
