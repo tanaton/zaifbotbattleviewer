@@ -593,14 +593,7 @@ class Client {
         const asset_now = obj.last_price.price * dispdata.currency_number;
         dispdata.asset_now = Math.round(asset_now).toLocaleString();
         const per = asset_now / (dispdata.currency_number * dispdata.purchase_price);
-        if (per >= 1) {
-            // 購入時の方が安い
-            dispdata.asset_per = (Math.round(((per * 100) - 100) * 100) / 100).toLocaleString();
-        } else {
-            // 購入時の方が高い
-            const per = (dispdata.currency_number * dispdata.purchase_price) / asset_now;
-            dispdata.asset_per = (-1 * (Math.round(((per * 100) - 100) * 100) / 100)).toLocaleString();
-        }
+        dispdata.asset_per = (Math.round(per * 10000) / 100).toLocaleString();
         document.title = dispdata.last_trade.action
             + ` ${dispdata.asset_now}`
             + ` (${dispdata.asset_per}%)`
