@@ -141,15 +141,12 @@ func (app *App) Run(ctx context.Context) error {
 		sch := make(chan ZaifStream, 8)
 		storesch := make(chan StoreData, 256)
 		tch := make(chan []Ticker)
-		app.wg.Add(1)
+		// まとめて起動
+		app.wg.Add(5)
 		go app.streamReaderProc(ctx, key, sch)
-		app.wg.Add(1)
 		go app.streamStoreProc(ctx, key, sch, storesch, sdch, lpch)
-		app.wg.Add(1)
 		go app.storeWriterProc(ctx, key, storesch)
-		app.wg.Add(1)
 		go app.getDepthProc(ctx, key, depthch)
-		app.wg.Add(1)
 		go app.getTickerProc(ctx, key, tch)
 		// URL設定
 		http.Handle("/api/zaif/1/oldstream/"+key, &OldStreamHandler{cp: key, ch: sdch})
