@@ -219,19 +219,19 @@ func (app *App) shutdown(ctx context.Context, sl ...Srv) error {
 	defer scancel()
 	for _, srv := range sl {
 		app.wg.Add(1)
-		go func(srv *http.Server) {
-			ssctx, sscancel := context.WithTimeout(sctx, time.Second*10)
+		go func(ctx context.Context, srv *http.Server) {
+			sctx, sscancel := context.WithTimeout(ctx, time.Second*10)
 			defer func() {
 				sscancel()
 				app.wg.Done()
 			}()
-			err := srv.Shutdown(ssctx)
+			err := srv.Shutdown(sctx)
 			if err != nil {
 				log.Warnw("サーバーの終了に失敗しました。", "error", err)
 			} else {
 				log.Infow("サーバーの終了に成功しました。", "Addr", srv.Addr)
 			}
-		}(srv.s)
+		}(sctx, srv.s)
 	}
 	// サーバーの終了待機
 	app.wg.Wait()
@@ -242,7 +242,7 @@ func (app *App) startExitManageProc(ctx context.Context) (context.Context, chan<
 	exitch := make(chan struct{}, 1)
 	ectx, cancel := context.WithCancel(ctx)
 	app.wg.Add(1)
-	go func(ch <-chan struct{}) {
+	go func(ctx context.Context, ch <-chan struct{}) {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig,
 			syscall.SIGHUP,
@@ -259,14 +259,14 @@ func (app *App) startExitManageProc(ctx context.Context) (context.Context, chan<
 		}()
 
 		select {
-		case <-ectx.Done():
+		case <-ctx.Done():
 			log.Infow("Cancel from parent")
 		case s := <-sig:
 			log.Infow("Signal!!", "signal", s)
 		case <-ch:
 			log.Infow("Exit command!!")
 		}
-	}(exitch)
+	}(ectx, exitch)
 	return ectx, exitch
 }
 
