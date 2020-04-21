@@ -451,13 +451,14 @@ class Graph {
             .attr("class", "line")
             .style("stroke", this.summary_path_stroke);
 
-        this.focus.append("g") 					// x目盛軸
-            .attr("class", "x axis")
-            .attr("transform", `translate(0,${this.focus_height})`)
+        this.svg.append("g") 					// x目盛軸
+            .attr("class", "x axis focus-x")
+            .attr("transform", `translate(${this.focus_margin.left},${this.focus_height + this.focus_margin.top})`)
             .call(this.focus_xAxis);
 
-        this.focus.append("g")					// y目盛軸
-            .attr("class", "y axis")
+        this.svg.append("g")					// y目盛軸
+            .attr("class", "y axis focus-y")
+            .attr("transform", `translate(${this.focus_margin.left},${this.focus_margin.top})`)
             .call(this.focus_yAxis);
 
         this.focus_legend.append('rect')		// 凡例の色付け四角
@@ -480,13 +481,14 @@ class Graph {
             .attr("class", "line")
             .style("stroke", this.summary_path_stroke);
 
-        this.summary.append("g")				// 全体x目盛軸
-            .attr("class", "x axis")
-            .attr("transform", `translate(0,${this.summary_height})`)
+        this.svg.append("g")				// 全体x目盛軸
+            .attr("class", "x axis summary-x")
+            .attr("transform", `translate(${this.summary_margin.left},${this.summary_height + this.summary_margin.top})`)
             .call(this.summary_xAxis);
 
-        this.summary.append("g")				// 全体y目盛軸
-            .attr("class", "y axis")
+        this.svg.append("g")				// 全体y目盛軸
+            .attr("class", "y axis summary-y")
+            .attr("transform", `translate(${this.summary_margin.left},${this.summary_margin.top})`)
             .call(this.summary_yAxis);
 
         this.depth.append("path")				// 深さグラフ
@@ -498,13 +500,14 @@ class Graph {
             .attr("opacity", .3)
             .style("fill", this.summary_path_stroke);
 
-        this.depth.append("g") 					// 深さx目盛軸
-            .attr("class", "x axis")
-            .attr("transform", `translate(0,${this.depth_height})`)
+        this.svg.append("g") 					// 深さx目盛軸
+            .attr("class", "x axis depth-x")
+            .attr("transform", `translate(${this.depth_margin.left},${this.depth_height + this.depth_margin.top})`)
             .call(this.depth_xAxis);
 
-        this.depth.append("g")					// 深さy目盛軸
-            .attr("class", "y axis")
+        this.svg.append("g")					// 深さy目盛軸
+            .attr("class", "y axis depth-y")
+            .attr("transform", `translate(${this.depth_margin.left},${this.depth_margin.top})`)
             .call(this.depth_yAxis);
     }
     private init(data: Stream): void {
@@ -826,23 +829,23 @@ class Graph {
             this.updateFocusDomain();
             this.focus.select<SVGPathElement>("path").attr("d", this.focus_path_d);		// 拡大グラフアップデート
             this.focus_legend.select<SVGTextElement>(".focus-legend-text").text(this.focus_legend_update);
-            this.focus.select<SVGGElement>(".x.axis").call(this.focus_xAxis);			// 拡大x軸アップデート
-            this.focus.select<SVGGElement>(".y.axis").call(this.focus_yAxis); 			// 拡大y軸アップデート
+            this.svg.select<SVGGElement>(".x.axis.focus-x").call(this.focus_xAxis);			// 拡大x軸アップデート
+            this.svg.select<SVGGElement>(".y.axis.focus-y").call(this.focus_yAxis); 			// 拡大y軸アップデート
         }
         if (this.draw_summary) {
             this.draw_summary = false;
             this.updateSummaryDomain();
             this.summary.select<SVGPathElement>("path").attr("d", this.summary_path_d);	// 全体グラフアップデート
-            this.summary.select<SVGGElement>(".x.axis").call(this.summary_xAxis);		// 全体x軸アップデート
+            this.svg.select<SVGGElement>(".x.axis.summary-x").call(this.summary_xAxis);		// 全体x軸アップデート
             this.summary_yAxis.tickValues(this.summary_y.domain());
-            this.summary.select<SVGGElement>(".y.axis").call(this.summary_yAxis);		// 全体x軸アップデート
+            this.svg.select<SVGGElement>(".y.axis.summary-y").call(this.summary_yAxis);		// 全体x軸アップデート
         }
         if (this.draw_depth) {
             this.draw_depth = false;
             this.updateDepthDomain();
             this.depth.select<SVGPathElement>("path").attr("d", this.depth_path_d);		// 深さグラフアップデート
-            this.depth.select<SVGGElement>(".x.axis").call(this.depth_xAxis);			// 深さx軸アップデート
-            this.depth.select<SVGGElement>(".y.axis").call(this.depth_yAxis); 			// 深さy軸アップデート
+            this.svg.select<SVGGElement>(".x.axis.depth-x").call(this.depth_xAxis);			// 深さx軸アップデート
+            this.svg.select<SVGGElement>(".y.axis.depth-y").call(this.depth_yAxis); 			// 深さy軸アップデート
             this.depth_area.select<SVGPathElement>("path").attr("d", this.depth_area_d);// 深さグラフ領域アップデート
         }
     }
