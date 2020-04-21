@@ -297,11 +297,14 @@ class CandlestickGraph {
         this.yVolume.domain(yd_volume).nice();
     }
     public draw(): void {
-        // 取引量
-        this.svg.selectAll<SVGGElement, Tick>(".rect_volume")
+        const chart = this.svg.selectAll<SVGGElement, Tick>(".rect_volume")
             .data(this.data)
-            .enter().append("rect")
-            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+            .enter()
+            .append("g")
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`);
+
+        // 取引量
+        chart.append("rect")
             .style("fill", "#000")
             .attr("opacity", .1)
             .attr("x", d => this.xCandle(d.date) - (this.candlewidth / 2))
@@ -310,10 +313,7 @@ class CandlestickGraph {
             .attr("height", d => Math.abs(this.yVolume(0) - this.yVolume(d.volume)));
 
         // ローソク本体
-        this.svg.selectAll<SVGGElement, Tick>(".rect_candle")
-            .data(this.data)
-            .enter().append("rect")
-            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+        chart.append("rect")
             .style("fill", this.rect_stroke)
             .attr("x", d => this.xCandle(d.date) - (this.candlewidth / 2))
             .attr("y", d => Math.min(this.yCandle(d.open), this.yCandle(d.close)))  // 画面の上の方が数値が小さい
@@ -321,10 +321,7 @@ class CandlestickGraph {
             .attr("height", d => Math.max(Math.abs(this.yCandle(d.open) - this.yCandle(d.close)), 2));
 
         // 値動きの範囲
-        this.svg.selectAll<SVGGElement, Tick>(".line_highlow")
-            .data(this.data)
-            .enter().append("line")
-            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+        chart.append("line")
             .attr("x1", d => this.xCandle(d.date))
             .attr("y1", d => this.yCandle(d.high))
             .attr("x2", d => this.xCandle(d.date))
@@ -333,10 +330,7 @@ class CandlestickGraph {
             .style("stroke", this.rect_stroke);
 
         // 重心
-        this.svg.selectAll<SVGGElement, Tick>(".circle_vwap")
-            .data(this.data)
-            .enter().append("circle")
-            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
+        chart.append("circle")
             .attr("cx", d => this.xCandle(d.date))
             .attr("cy", d => this.yCandle(d.vwap))
             .attr("r", Math.min(Math.max(this.candlewidth - 1, 1), 5))
@@ -472,13 +466,14 @@ class DepthGraph {
             .attr("opacity", .3)
             .style("fill", this.path_stroke);
 
-        this.graph.append("g") 					// 深さx目盛軸
-            .attr("class", "x axis")
-            .attr("transform", `translate(0,${this.height})`)
+        this.svg.append("g") 					// 深さx目盛軸
+            .attr("class", "x axis depth-x")
+            .attr("transform", `translate(${this.margin.left},${this.height + this.margin.top})`)
             .call(this.xAxis);
 
-        this.graph.append("g")					// 深さy目盛軸
-            .attr("class", "y axis")
+        this.svg.append("g")					// 深さy目盛軸
+            .attr("class", "y axis depth-y")
+            .attr("transform", `translate(${this.margin.left},${this.margin.top})`)
             .call(this.yAxis);
     }
     public dispose(): void {
@@ -516,10 +511,10 @@ class DepthGraph {
         this.y.domain(yd).nice();
     }
     public draw(): void {
-        this.graph.select<SVGPathElement>("path").attr("d", this.path_d);		// 深さグラフアップデート
-        this.graph.select<SVGGElement>(".x.axis").call(this.xAxis);			// 深さx軸アップデート
-        this.graph.select<SVGGElement>(".y.axis").call(this.yAxis); 			// 深さy軸アップデート
-        this.graph_area.select<SVGPathElement>("path").attr("d", this.area_d);// 深さグラフ領域アップデート
+        this.graph.select<SVGPathElement>("path").attr("d", this.path_d);       // 深さグラフアップデート
+        this.svg.select<SVGGElement>(".x.axis.depth-x").call(this.xAxis);       // 深さx軸アップデート
+        this.svg.select<SVGGElement>(".y.axis.depth-y").call(this.yAxis);       // 深さy軸アップデート
+        this.graph_area.select<SVGPathElement>("path").attr("d", this.area_d);  // 深さグラフ領域アップデート
     }
 }
 class Timer {
