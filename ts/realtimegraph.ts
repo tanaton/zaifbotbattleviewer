@@ -647,10 +647,7 @@ class Graph {
             while (cd.values.length > 16000) {
                 cd.values.shift();
             }
-            if (sd.values.length < 3) {
-                this.draw_summary = true;
-            }
-            if (this.draw_summary && lastflag) {
+            if (this.draw_summary || lastflag) {
                 // contextを要約してsummaryを作る
                 Graph.LTTB(sd.values, cd.values, 200);
                 this.draw_summary_old_date = date;
