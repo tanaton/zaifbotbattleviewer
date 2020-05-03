@@ -606,7 +606,7 @@ class Graph {
             dv.push(val);
         }
     }
-    public addContext(data: Stream): void {
+    public addContext(data: Stream, lastflag?: boolean): void {
         const date = data.Date;
         const datestart = new Date(date.getTime() - (this.focus_xaxis_sec * 1000));
         const l = this.focus_data.length;
@@ -617,7 +617,6 @@ class Graph {
         // 一定時間経過でsummary更新
         if ((date.getTime() - summaryUpdateInterval) > this.draw_summary_old_date.getTime()) {
             this.draw_summary = true;
-            this.draw_summary_old_date = date;
         }
         for (let i = 0; i < l; i++) {
             const fd = this.focus_data[i];
@@ -651,9 +650,10 @@ class Graph {
             if (sd.values.length < 3) {
                 this.draw_summary = true;
             }
-            if (this.draw_summary) {
+            if (this.draw_summary && lastflag) {
                 // contextを要約してsummaryを作る
                 Graph.LTTB(sd.values, cd.values, 200);
+                this.draw_summary_old_date = date;
             }
         }
     }
@@ -1049,7 +1049,7 @@ class Client {
     }
     private addData(obj: Stream): void {
         if (this.graph !== undefined) {
-            this.graph.addContext(obj);
+            this.graph.addContext(obj, true);
             this.graph.addDepth(obj);
         }
     }
@@ -1080,7 +1080,9 @@ class Client {
         let ask: readonly [number, number] | undefined = undefined;
         let bid: readonly [number, number] | undefined = undefined;
         let trade: HistoryTrade | undefined = undefined;
-        for (const it of data) {
+        const len = data.length - 1;
+        for (let index = 0; index <= len; ++index) {    // -1したlengthを後で利用する
+            const it = data[index];
             if (it.ask !== undefined) {
                 ask = it.ask;
             }
@@ -1110,7 +1112,7 @@ class Client {
                     this.createGraph(obj);
                 }
                 if (this.graph) {
-                    this.graph.addContext(obj);
+                    this.graph.addContext(obj, (index === len));    // 末尾判定
                 }
             }
         }
