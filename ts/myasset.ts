@@ -202,7 +202,7 @@ class CandlestickGraph {
         const div = document.getElementById(svgIDCandlestick);
         this.width = div?.offsetWidth ?? 850;
         this.width = this.width - this.margin.left - this.margin.right;
-        this.height = 460 - this.margin.top - this.margin.bottom;
+        this.height = Math.min(this.width, 430);
 
         this.xCandle = d3.scaleTime()
             .domain([0, 0])

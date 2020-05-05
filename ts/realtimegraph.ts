@@ -51,10 +51,10 @@ function isSignal(a: string): a is Signal {
 type AskBid = "Asks" | "Bids";
 
 type Box = {
-    readonly top: number;
-    readonly right: number;
-    readonly bottom: number;
-    readonly left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
 }
 
 type TradeView = {
@@ -273,13 +273,13 @@ class ZaifDate {
 const fixDate = new ZaifDate();
 
 class Graph {
-    private readonly focus_margin: Box = { top: 30, right: 10, bottom: 20, left: 60 };
+    private focus_margin: Box = { top: 30, right: 10, bottom: 20, left: 55 };
     private focus_width: number;
     private focus_height: number;
-    private readonly summary_margin: Box = { top: 550, right: 10, bottom: 20, left: 60 };
+    private summary_margin: Box = { top: 10, right: 10, bottom: 20, left: 55 };
     private summary_width: number;
     private summary_height: number;
-    private readonly depth_margin: Box = { top: 670, right: 10, bottom: 20, left: 60 };
+    private depth_margin: Box = { top: 10, right: 10, bottom: 20, left: 55 };
     private depth_width: number;
     private depth_height: number;
     private tid: number = 0;
@@ -344,11 +344,13 @@ class Graph {
         const div = document.getElementById(svgID);
         const width = div?.offsetWidth ?? 850;
         this.focus_width = width - this.focus_margin.left - this.focus_margin.right;
-        this.focus_height = 540 - this.focus_margin.top - this.focus_margin.bottom;
+        this.focus_height = Math.min(this.focus_width, 500);
+        this.summary_margin.top = this.focus_height + this.focus_margin.top + this.focus_margin.bottom + 10;
         this.summary_width = width - this.summary_margin.left - this.summary_margin.right;
-        this.summary_height = 660 - this.summary_margin.top - this.summary_margin.bottom;
+        this.summary_height = 100;
+        this.depth_margin.top = this.summary_height + this.summary_margin.top + this.summary_margin.bottom + 10;
         this.depth_width = width - this.depth_margin.left - this.depth_margin.right;
-        this.depth_height = 820 - this.depth_margin.top - this.depth_margin.bottom;
+        this.depth_height = 130;
         this.ydtmp = [{
             date: obj.Date,
             data: PriceMax
