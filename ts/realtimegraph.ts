@@ -231,6 +231,7 @@ const historyDataURL = "/api/zaif/1/oldstream/";
 const currency_pair_list: readonly CurrencyPair[] = ["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"];
 const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
+const atoi = (str: string): number => parseInt(str, 10);
 const PriceMax = 10_000_000;
 const PriceMin = -10_000_000;
 const summaryUpdateInterval = 60 * 1000;	// 60秒
@@ -242,7 +243,25 @@ class ZaifDate {
         this.diff = 0;
     }
     public set(timestamp: string): void {
-        this.diff = Date.parse(timestamp) - Date.now();
+        let zaif = Date.parse(timestamp);
+        if (Number.isNaN(zaif)) {
+            // 2020-05-05 21:02:51.353793
+            const d = timestamp.split(" ", 2)
+                .map<string[]>((it, i) => {
+                    if (i === 0) {
+                        return it.split("-", 3);
+                    }
+                    const index = it.indexOf(".") ?? -1;
+                    if (index < 0) {
+                        return it.split(":", 3).concat(["0"]);
+                    }
+                    return it.slice(0, index).split(":", 3).concat([it.slice(index + 1)]);
+                })
+                .reduce((a, c) => a.concat(c))
+                .map(atoi);
+            zaif = d.length >= 7 ? (new Date(d[0], d[1] - 1, d[2], d[3], d[4], d[5], (d[6] / 1000) | 0)).getTime() : Date.now();
+        }
+        this.diff = zaif - Date.now();
     }
     public getDate(): Date {
         return new Date(Date.now() + this.diff);
