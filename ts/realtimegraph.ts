@@ -50,18 +50,6 @@ function isSignal(a: string): a is Signal {
 }
 type AskBid = "Asks" | "Bids";
 
-const svgID = "svgarea";
-const streamBaseURL = "wss://ws.zaif.jp/stream?currency_pair=";
-const historyDataURL = "/api/zaif/1/oldstream/";
-const currency_pair_list: readonly CurrencyPair[] = ["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"];
-const timeFormat = d3.timeFormat("%H:%M:%S");
-const floatFormat = d3.format(".1f");
-const PriceMax = 10_000_000;
-const PriceMin = -10_000_000;
-const summaryUpdateInterval = 60 * 1000;	// 60秒
-const focusUpdateIntervalFPS = 10;
-const focusXAxisSec = 120;
-
 type Box = {
     readonly top: number;
     readonly right: number;
@@ -237,6 +225,34 @@ type Display = {
     };
 }
 
+const svgID = "svgarea";
+const streamBaseURL = "wss://ws.zaif.jp/stream?currency_pair=";
+const historyDataURL = "/api/zaif/1/oldstream/";
+const currency_pair_list: readonly CurrencyPair[] = ["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"];
+const timeFormat = d3.timeFormat("%H:%M:%S");
+const floatFormat = d3.format(".1f");
+const PriceMax = 10_000_000;
+const PriceMin = -10_000_000;
+const summaryUpdateInterval = 60 * 1000;	// 60秒
+const focusUpdateIntervalFPS = 10;
+const focusXAxisSec = 120;
+class ZaifDate {
+    private diff: number;
+    constructor() {
+        this.diff = 0;
+    }
+    public set(timestamp: string): void {
+        this.diff = Date.parse(timestamp) - Date.now();
+    }
+    public getDate(): Date {
+        return new Date(Date.now() + this.diff);
+    }
+    public getDiff(): number {
+        return this.diff;
+    }
+}
+const fixDate = new ZaifDate();
+
 class Graph {
     private readonly focus_margin: Box = { top: 30, right: 10, bottom: 20, left: 60 };
     private focus_width: number;
@@ -300,7 +316,7 @@ class Graph {
 
     private draw_focus: boolean = false;
     private draw_summary: boolean = false;
-    private draw_summary_old_date: Date = new Date();
+    private draw_summary_old_date: Date = fixDate.getDate();
     private draw_depth: boolean = false;
     private focus_domain_yaxis_update: boolean = false;
     private focus_xaxis_sec: number = 120;
@@ -517,7 +533,7 @@ class Graph {
         this.tid = window.setInterval((): void => {
             const data: Stream = {
                 Name: "",
-                Date: new Date(),
+                Date: fixDate.getDate(),
                 Signals: {
                     "Asks": { Data: 0 },
                     "Bids": { Data: 0 },
@@ -689,7 +705,7 @@ class Graph {
         return (num > it.data) ? num : it.data;
     }
     public updateFocusDomain(all = false): void {
-        const date = new Date();
+        const date = fixDate.getDate();
         const datestart = new Date(date.getTime() - (this.focus_xaxis_sec * 1000));
         const focus_xd = [datestart, date];
         const ydtmp = this.ydtmp;
@@ -728,7 +744,7 @@ class Graph {
         this.focus_y.domain([ydtmp[0].data, ydtmp[1].data]).nice();
     }
     public updateSummaryDomain(all = false): void {
-        const date = new Date();
+        const date = fixDate.getDate();
         const summary_xd = this.summary_x.domain();
         const summary_yd = this.summary_y.domain();
         summary_xd[0] = date;
@@ -791,7 +807,7 @@ class Graph {
         return a.date.getTime() - b.date.getTime();
     }
     public setFocusXAxis(sec: number = 120): void {
-        const datestart = new Date(Date.now() - (sec * 1000));
+        const datestart = new Date(fixDate.getDate().getTime() - (sec * 1000));
         const l = this.focus_data.length;
         for (let i = 0; i < l; i++) {
             const cv = this.context_data[i].values;
@@ -949,9 +965,11 @@ class Client {
         return action === "ask" ? "▼" : "▲";
     }
     private update(obj: ZaifStream) {
+        // 時刻調整
+        fixDate.set(obj.timestamp);
         const data: Stream = {
             Name: obj.currency_pair,
-            Date: new Date(),
+            Date: fixDate.getDate(),
             Signals: {
                 Asks: {
                     Data: obj.asks[0][0]
@@ -1019,7 +1037,7 @@ class Client {
         }
         this.analyzeBoard(dispdata.bids, obj.bids);
         this.analyzeBoard(dispdata.asks, obj.asks);
-        dispdata.date_diff = (Date.parse(obj.timestamp) - Date.now()) / 1000;
+        dispdata.date_diff = fixDate.getDiff();
     }
     private analyzeBoard(dst: Board[], data: readonly [number, number][]) {
         let dep = 0;
@@ -1170,6 +1188,9 @@ const dispdata: Display = {
 const vm = new Vue({
     el: "#container",
     data: dispdata,
+    computed: {
+        date_diff_print: () => (dispdata.date_diff / 1000).toString()
+    },
     watch: {
         "focus.xaxis.selected": (n) => {
             cli.setGraphFocusXAxis(n);
