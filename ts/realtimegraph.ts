@@ -273,7 +273,7 @@ class ZaifDate {
 const fixDate = new ZaifDate();
 
 class Graph {
-    private focus_margin: Box = { top: 30, right: 10, bottom: 20, left: 55 };
+    private focus_margin: Box = { top: 10, right: 10, bottom: 20, left: 55 };
     private focus_width: number;
     private focus_height: number;
     private summary_margin: Box = { top: 10, right: 10, bottom: 20, left: 55 };
@@ -285,9 +285,10 @@ class Graph {
     private tid: number = 0;
     private rid: number = 0;
 
+    private dom: d3.Selection<HTMLDivElement, unknown, HTMLElement, unknown>;
     private svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, unknown>;
     private focus: d3.Selection<SVGGElement, Context, SVGSVGElement, unknown>;
-    private focus_legend: d3.Selection<SVGGElement, Legend, SVGSVGElement, unknown>;
+    private focus_legend: d3.Selection<HTMLDivElement, Legend, HTMLDivElement, unknown>;
     private summary: d3.Selection<SVGGElement, Context, SVGSVGElement, unknown>;
     private depth: d3.Selection<SVGGElement, Depth, SVGSVGElement, unknown>;
 
@@ -316,7 +317,6 @@ class Graph {
 
     private summary_color: d3.ScaleOrdinal<string, string>;
     private summary_path_stroke: (d: { name: string }) => string;
-    private focus_legend_transform: (d: Legend, i: number) => string;
     private focus_legend_update: (d: Legend) => string;
 
     private focus_data: Context[] = [];
@@ -442,12 +442,12 @@ class Graph {
         this.summary_color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
         this.summary_path_stroke = d => this.summary_color(d.name);
 
-        this.focus_legend_transform = (d: Legend, i: number): string => `translate(${(i * 150) + 66},0)`;
         this.focus_legend_update = (d: Legend): string => `${d.name} ${d.last_price.toLocaleString()}`;
 
         // オブジェクト構築
         this.init(obj);
 
+        this.dom = d3.select("#" + svgID).append("div").attr("class", "row");
         this.svg = d3.select("#" + svgID).append("svg");
         this.svg
             .attr("width", this.focus_width + this.focus_margin.left + this.focus_margin.right + 10)
@@ -459,11 +459,10 @@ class Graph {
             .attr("transform", `translate(${this.focus_margin.left},${this.focus_margin.top})`)
             .attr("class", "focus");
 
-        this.focus_legend = this.svg.selectAll<SVGGElement, Legend>(".focus-legend")
+        this.focus_legend = this.dom.selectAll<HTMLDivElement, Legend>(".focus-legend")
             .data(this.focus_data_legend)
-            .enter().append("g")
-            .attr("transform", "translate(0,0)")
-            .attr("class", "focus-legend");
+            .enter().append("div")
+            .attr("class", "col-4 focus-legend");
 
         this.summary = this.svg.selectAll<SVGGElement, Context>(".summary")
             .data(this.summary_data)
@@ -491,21 +490,14 @@ class Graph {
             .attr("transform", `translate(${this.focus_margin.left},${this.focus_margin.top})`)
             .call(this.focus_yAxis);
 
-        this.focus_legend.append('rect')		// 凡例の色付け四角
-            .attr("x", 0)
-            .attr("y", 10)
-            .attr("width", 10)
-            .attr("height", 10)
-            .style("fill", this.summary_path_stroke)
-            .attr("transform", this.focus_legend_transform);
+        this.focus_legend.append('span')		// 凡例の色付け四角
+            .html("&#x25A0;")                   // Black Square
+            .style("color", this.summary_path_stroke)
+            .attr("class", "focus-legend-rect");
 
-        this.focus_legend.append('text')		// 凡例の文言
-            .attr("x", 20)
-            .attr("y", 20)
+        this.focus_legend.append('span')		// 凡例の文言
             .text(this.focus_legend_update)
-            .attr("class", "focus-legend-text")
-            .style("text-anchor", "start")
-            .attr("transform", this.focus_legend_transform);
+            .attr("class", "focus-legend-text");
 
         this.summary.append("path")				// 全体グラフ
             .attr("class", "line summary-path")
@@ -858,7 +850,7 @@ class Graph {
             this.draw_focus = false;
             this.updateFocusDomain();
             this.focus.select<SVGPathElement>("path").attr("d", this.focus_path_d);	            	// 拡大グラフアップデート
-            this.focus_legend.select<SVGTextElement>(".focus-legend-text").text(this.focus_legend_update);
+            this.focus_legend.select<HTMLDivElement>(".focus-legend-text").text(this.focus_legend_update);
             this.svg.select<SVGGElement>(".x.axis.focus-x").call(this.focus_xAxis);	        		// 拡大x軸アップデート
             this.svg.select<SVGGElement>(".y.axis.focus-y").call(this.focus_yAxis); 	    		// 拡大y軸アップデート
         }
