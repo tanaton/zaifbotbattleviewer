@@ -229,6 +229,7 @@ const svgID = "svgarea";
 const streamBaseURL = "wss://ws.zaif.jp/stream?currency_pair=";
 const historyDataURL = "/api/zaif/1/oldstream/";
 const currency_pair_list: readonly CurrencyPair[] = ["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"];
+const currency_hash_default = "#btc_jpy";
 const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
 const atoi = (str: string): number => parseInt(str, 10);
@@ -274,14 +275,14 @@ const fixDate = new ZaifDate();
 
 class Graph {
     private focus_margin: Box = { top: 10, right: 10, bottom: 20, left: 55 };
-    private focus_width: number;
-    private focus_height: number;
+    private focus_width: number = 0;
+    private focus_height: number = 0;
     private summary_margin: Box = { top: 10, right: 10, bottom: 20, left: 55 };
-    private summary_width: number;
-    private summary_height: number;
+    private summary_width: number = 0;
+    private summary_height: number = 0;
     private depth_margin: Box = { top: 10, right: 10, bottom: 20, left: 55 };
-    private depth_width: number;
-    private depth_height: number;
+    private depth_width: number = 0;
+    private depth_height: number = 0;
     private tid: number = 0;
     private rid: number = 0;
 
@@ -296,28 +297,39 @@ class Graph {
     private focus_y: d3.ScaleLinear<number, number>;
     private focus_xAxis: d3.Axis<Date>;
     private focus_yAxis: d3.Axis<number | { valueOf(): number; }>;
+    private focus_xAxis_g: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
+    private focus_yAxis_g: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
     private focus_line: d3.Line<ChartPathData>;
     private focus_path_d: (d: Context) => string | null;
+    private focus_legend_update: (d: Legend) => string;
+    private focus_path_g: d3.Selection<SVGPathElement, Context, SVGSVGElement, unknown>;
+    private focus_legend_g: d3.Selection<HTMLSpanElement, Legend, HTMLElement, unknown>;
 
     private summary_x: d3.ScaleTime<number, number>;
     private summary_y: d3.ScaleLinear<number, number>;
     private summary_xAxis: d3.Axis<Date>;
     private summary_yAxis: d3.Axis<number | { valueOf(): number; }>;
+    private summary_xAxis_g: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
+    private summary_yAxis_g: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
     private summary_line: d3.Line<ChartPathData>;
     private summary_path_d: (d: Context) => string | null;
+    private summary_path_g: d3.Selection<SVGPathElement, Context, SVGSVGElement, unknown>;
 
     private depth_x: d3.ScaleLinear<number, number>;
     private depth_y: d3.ScaleLinear<number, number>;
     private depth_xAxis: d3.Axis<number | { valueOf(): number; }>;
     private depth_yAxis: d3.Axis<number>;
+    private depth_xAxis_g: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
+    private depth_yAxis_g: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
     private depth_line: d3.Line<ChartDepthData>;
     private depth_path_d: (d: Depth) => string | null;
     private depth_line_area: d3.Area<ChartDepthData>;
     private depth_area_d: (d: Depth) => string | null;
+    private depth_path_g: d3.Selection<SVGPathElement, Depth, SVGSVGElement, unknown>;
+    private depth_area_g: d3.Selection<SVGPathElement, Depth, SVGSVGElement, unknown>;
 
     private summary_color: d3.ScaleOrdinal<string, string>;
     private summary_path_stroke: (d: { name: string }) => string;
-    private focus_legend_update: (d: Legend) => string;
 
     private focus_data: Context[] = [];
     private focus_data_legend: Legend[] = [];
@@ -360,18 +372,14 @@ class Graph {
         }];
 
         this.focus_x = d3.scaleTime()
-            .domain([0, 0])
-            .range([0, this.focus_width]);
+            .domain([0, 0]);
         this.focus_y = d3.scaleLinear()
-            .domain([PriceMax, PriceMin])
-            .range([this.focus_height, 0]);
+            .domain([PriceMax, PriceMin]);
         this.focus_xAxis = d3.axisBottom<Date>(this.focus_x)
-            .tickSizeInner(-this.focus_height)
             .tickFormat(timeFormat)
             .tickPadding(7)
             .ticks(5);
         this.focus_yAxis = d3.axisLeft(this.focus_y)
-            .tickSizeInner(-this.focus_width)
             .tickPadding(7)
             .ticks(5);
         this.focus_line = d3.line<ChartPathData>()
@@ -382,18 +390,14 @@ class Graph {
         this.focus_path_d = d => this.focus_line(d.values);
 
         this.summary_x = d3.scaleTime()
-            .domain(this.focus_x.domain())
-            .range([0, this.summary_width]);
+            .domain(this.focus_x.domain());
         this.summary_y = d3.scaleLinear()
-            .domain(this.focus_y.domain())
-            .range([this.summary_height, 0]);
+            .domain(this.focus_y.domain());
         this.summary_xAxis = d3.axisBottom<Date>(this.summary_x)
-            .tickSizeInner(-this.summary_height)
             .tickFormat(timeFormat)
             .tickPadding(7)
             .ticks(5);
         this.summary_yAxis = d3.axisLeft(this.summary_y)
-            .tickSizeInner(-this.summary_width)
             .tickPadding(7);
         this.summary_line = d3.line<ChartPathData>()
             //.curve(d3.curveLinear)
@@ -403,19 +407,13 @@ class Graph {
         this.summary_path_d = d => this.summary_line(d.values);
 
         this.depth_x = d3.scaleLinear()
-            .domain([0, 0])
-            .range([0, this.depth_width]);
+            .domain([0, 0]);
         this.depth_y = d3.scaleLinear()
-            .domain([PriceMax, PriceMin])
-            .range([this.depth_height, 0]);
+            .domain([PriceMax, PriceMin]);
         this.depth_xAxis = d3.axisBottom(this.depth_x)
-            .tickSizeOuter(-this.depth_height)
-            .tickSizeInner(-this.depth_height)
             .tickPadding(7)
             .ticks(5);
         this.depth_yAxis = d3.axisLeft<number>(this.depth_y)
-            .tickSizeOuter(-this.depth_width)
-            .tickSizeInner(-this.depth_width)
             .tickFormat((depth: number) => {
                 let ret;
                 if (depth >= 1000000) {
@@ -449,14 +447,10 @@ class Graph {
 
         this.dom = d3.select("#" + svgID).append("div").attr("class", "row");
         this.svg = d3.select("#" + svgID).append("svg");
-        this.svg
-            .attr("width", this.focus_width + this.focus_margin.left + this.focus_margin.right + 10)
-            .attr("height", this.depth_height + this.depth_margin.top + this.depth_margin.bottom + 10);
 
         this.focus = this.svg.selectAll<SVGGElement, Context>(".focus")
             .data(this.focus_data)
             .enter().append("g")
-            .attr("transform", `translate(${this.focus_margin.left},${this.focus_margin.top})`)
             .attr("class", "focus");
 
         this.focus_legend = this.dom.selectAll<HTMLDivElement, Legend>(".focus-legend")
@@ -467,70 +461,59 @@ class Graph {
         this.summary = this.svg.selectAll<SVGGElement, Context>(".summary")
             .data(this.summary_data)
             .enter().append("g")
-            .attr("transform", `translate(${this.summary_margin.left},${this.summary_margin.top})`)
             .attr("class", "summary");
 
         this.depth = this.svg.selectAll<SVGGElement, Depth>(".depth")
             .data(this.depth_data)
             .enter().append("g")
-            .attr("transform", `translate(${this.depth_margin.left},${this.depth_margin.top})`)
             .attr("class", "depth");
 
-        this.focus.append("path")				// 拡大グラフ
+        this.focus_path_g = this.focus.append("path")	// 拡大グラフ
             .attr("class", "line focus-path")
             .style("stroke", this.summary_path_stroke);
 
-        this.svg.append("g") 					// x目盛軸
-            .attr("class", "x axis focus-x")
-            .attr("transform", `translate(${this.focus_margin.left},${this.focus_height + this.focus_margin.top})`)
-            .call(this.focus_xAxis);
+        this.focus_xAxis_g = this.svg.append("g") 		// x目盛軸
+            .attr("class", "x axis focus-x");
 
-        this.svg.append("g")					// y目盛軸
-            .attr("class", "y axis focus-y")
-            .attr("transform", `translate(${this.focus_margin.left},${this.focus_margin.top})`)
-            .call(this.focus_yAxis);
+        this.focus_yAxis_g = this.svg.append("g")		// y目盛軸
+            .attr("class", "y axis focus-y");
 
-        this.focus_legend.append('span')		// 凡例の色付け四角
-            .html("&#x25A0;")                   // Black Square
+        this.focus_legend.append('span')	        	// 凡例の色付け四角
+            .html("&#x25A0;")                           // Black Square
             .style("color", this.summary_path_stroke)
             .attr("class", "focus-legend-rect");
 
-        this.focus_legend.append('span')		// 凡例の文言
+        this.focus_legend_g = this.focus_legend.append('span')  // 凡例の文言
             .text(this.focus_legend_update)
             .attr("class", "focus-legend-text");
 
-        this.summary.append("path")				// 全体グラフ
+        this.summary_path_g = this.summary.append("path")       // 全体グラフ
             .attr("class", "line summary-path")
             .style("stroke", this.summary_path_stroke);
 
-        this.svg.append("g")				// 全体x目盛軸
-            .attr("class", "x axis summary-x")
-            .attr("transform", `translate(${this.summary_margin.left},${this.summary_height + this.summary_margin.top})`)
-            .call(this.summary_xAxis);
+        this.summary_xAxis_g = this.svg.append("g")		// 全体x目盛軸
+            .attr("class", "x axis summary-x");
 
-        this.svg.append("g")				// 全体y目盛軸
-            .attr("class", "y axis summary-y")
-            .attr("transform", `translate(${this.summary_margin.left},${this.summary_margin.top})`)
-            .call(this.summary_yAxis);
+        this.summary_yAxis_g = this.svg.append("g")		// 全体y目盛軸
+            .attr("class", "y axis summary-y");
 
-        this.depth.append("path")				// 深さグラフ
+        this.depth_path_g = this.depth.append("path")   // 深さグラフ
             .attr("class", "line depth-path")
             .style("stroke", this.summary_path_stroke);
 
-        this.depth.append("path")			// 深さグラフ領域
+        this.depth_area_g = this.depth.append("path")      // 深さグラフ領域
             .attr("class", "depth-area-path")
             .attr("opacity", .3)
             .style("fill", this.summary_path_stroke);
 
-        this.svg.append("g") 					// 深さx目盛軸
-            .attr("class", "x axis depth-x")
-            .attr("transform", `translate(${this.depth_margin.left},${this.depth_height + this.depth_margin.top})`)
-            .call(this.depth_xAxis);
+        this.depth_xAxis_g = this.svg.append("g") 		// 深さx目盛軸
+            .attr("class", "x axis depth-x");
 
-        this.svg.append("g")					// 深さy目盛軸
-            .attr("class", "y axis depth-y")
-            .attr("transform", `translate(${this.depth_margin.left},${this.depth_margin.top})`)
-            .call(this.depth_yAxis);
+        this.depth_yAxis_g = this.svg.append("g")		// 深さy目盛軸
+            .attr("class", "y axis depth-y");
+
+        // 大きさや位置を整える
+        this.resize();
     }
     private init(data: Stream): void {
         this.summary_color.domain([]);
@@ -578,6 +561,58 @@ class Graph {
     public restartTimer(fps: number): void {
         this.stopTimer();
         this.startTimer(fps);
+    }
+    public resize(): void {
+        const div = document.getElementById(svgID);
+        const width = div?.offsetWidth ?? 850;
+        this.focus_width = width - this.focus_margin.left - this.focus_margin.right;
+        this.focus_height = Math.min(this.focus_width, 500);
+        this.summary_margin.top = this.focus_height + this.focus_margin.top + this.focus_margin.bottom + 10;
+        this.summary_width = width - this.summary_margin.left - this.summary_margin.right;
+        this.summary_height = 100;
+        this.depth_margin.top = this.summary_height + this.summary_margin.top + this.summary_margin.bottom + 10;
+        this.depth_width = width - this.depth_margin.left - this.depth_margin.right;
+        this.depth_height = 130;
+
+        this.focus_x.range([0, this.focus_width]);
+        this.focus_y.range([this.focus_height, 0]);
+        this.focus_xAxis.tickSizeInner(-this.focus_height);
+        this.focus_yAxis.tickSizeInner(-this.focus_width);
+
+        this.summary_x.range([0, this.summary_width]);
+        this.summary_y.range([this.summary_height, 0]);
+        this.summary_xAxis.tickSizeInner(-this.summary_height);
+        this.summary_yAxis.tickSizeInner(-this.summary_width);
+
+        this.depth_x.range([0, this.depth_width]);
+        this.depth_y.range([this.depth_height, 0]);
+        this.depth_xAxis
+            .tickSizeOuter(-this.depth_height)
+            .tickSizeInner(-this.depth_height);
+        this.depth_yAxis
+            .tickSizeOuter(-this.depth_width)
+            .tickSizeInner(-this.depth_width);
+
+        this.svg
+            .attr("width", this.focus_width + this.focus_margin.left + this.focus_margin.right + 10)
+            .attr("height", this.depth_height + this.depth_margin.top + this.depth_margin.bottom + 10);
+
+        this.focus.attr("transform", `translate(${this.focus_margin.left},${this.focus_margin.top})`);
+        this.summary.attr("transform", `translate(${this.summary_margin.left},${this.summary_margin.top})`);
+        this.depth.attr("transform", `translate(${this.depth_margin.left},${this.depth_margin.top})`);
+
+        this.focus_xAxis_g
+            .attr("transform", `translate(${this.focus_margin.left},${this.focus_height + this.focus_margin.top})`);
+        this.focus_yAxis_g
+            .attr("transform", `translate(${this.focus_margin.left},${this.focus_margin.top})`);
+        this.summary_xAxis_g
+            .attr("transform", `translate(${this.summary_margin.left},${this.summary_height + this.summary_margin.top})`);
+        this.summary_yAxis_g
+            .attr("transform", `translate(${this.summary_margin.left},${this.summary_margin.top})`);
+        this.depth_xAxis_g
+            .attr("transform", `translate(${this.depth_margin.left},${this.depth_height + this.depth_margin.top})`);
+        this.depth_yAxis_g
+            .attr("transform", `translate(${this.depth_margin.left},${this.depth_margin.top})`);
     }
     public dispose(): void {
         this.stopTimer();
@@ -849,26 +884,26 @@ class Graph {
         if (this.draw_focus) {
             this.draw_focus = false;
             this.updateFocusDomain();
-            this.focus.select<SVGPathElement>("path").attr("d", this.focus_path_d);	            	// 拡大グラフアップデート
-            this.focus_legend.select<HTMLDivElement>(".focus-legend-text").text(this.focus_legend_update);
-            this.svg.select<SVGGElement>(".x.axis.focus-x").call(this.focus_xAxis);	        		// 拡大x軸アップデート
-            this.svg.select<SVGGElement>(".y.axis.focus-y").call(this.focus_yAxis); 	    		// 拡大y軸アップデート
+            this.focus_path_g.attr("d", this.focus_path_d);	     // 拡大グラフアップデート
+            this.focus_legend_g.text(this.focus_legend_update);  // 拡大グラフ凡例アップデート
+            this.focus_xAxis_g.call(this.focus_xAxis);	         // 拡大x軸アップデート
+            this.focus_yAxis_g.call(this.focus_yAxis); 	    	 // 拡大y軸アップデート
         }
         if (this.draw_summary) {
             this.draw_summary = false;
             this.updateSummaryDomain();
-            this.summary.select<SVGPathElement>("path").attr("d", this.summary_path_d);	            // 全体グラフアップデート
-            this.svg.select<SVGGElement>(".x.axis.summary-x").call(this.summary_xAxis);		        // 全体x軸アップデート
+            this.summary_path_g.attr("d", this.summary_path_d);	      // 全体グラフアップデート
+            this.summary_xAxis_g.call(this.summary_xAxis);            // 全体x軸アップデート
             this.summary_yAxis.tickValues(this.summary_y.domain());
-            this.svg.select<SVGGElement>(".y.axis.summary-y").call(this.summary_yAxis);	        	// 全体x軸アップデート
+            this.summary_yAxis_g.call(this.summary_yAxis);            // 全体x軸アップデート
         }
         if (this.draw_depth) {
             this.draw_depth = false;
             this.updateDepthDomain();
-            this.depth.select<SVGPathElement>("path.depth-path").attr("d", this.depth_path_d);		// 深さグラフアップデート
-            this.depth.select<SVGPathElement>("path.depth-area-path").attr("d", this.depth_area_d); // 深さグラフ領域アップデート
-            this.svg.select<SVGGElement>(".x.axis.depth-x").call(this.depth_xAxis);		        	// 深さx軸アップデート
-            this.svg.select<SVGGElement>(".y.axis.depth-y").call(this.depth_yAxis); 	    		// 深さy軸アップデート
+            this.depth_path_g.attr("d", this.depth_path_d);		// 深さグラフアップデート
+            this.depth_area_g.attr("d", this.depth_area_d);     // 深さグラフ領域アップデート
+            this.depth_xAxis_g.call(this.depth_xAxis);          // 深さx軸アップデート
+            this.depth_yAxis_g.call(this.depth_yAxis);          // 深さy軸アップデート
         }
     }
 
@@ -939,10 +974,22 @@ class Graph {
 
 class Client {
     private graph?: Graph = undefined;
-    private readonly ws: WebSocket;
-    private readonly currency_pair: CurrencyPair;
+    private ws?: WebSocket;
+    private currency_pair: CurrencyPair = Client.getCurrencyPair(currency_hash_default);
+    private resize_timeid: number = 0;
 
-    constructor(hash: string = "#btc_jpy") {
+    constructor(hash: string = currency_hash_default) {
+        this.init(hash);
+        window.addEventListener("resize", () => this.changesize(), false);
+        window.addEventListener("orientationchange", () => this.changesize(), false);
+        window.addEventListener("hashchange", () => {
+            dispdata.focus.xaxis.selected = focusXAxisSec;
+            dispdata.focus.fps.selected = focusUpdateIntervalFPS;
+            this.clear();
+            this.init(location.hash);
+        }, false);
+    }
+    public init(hash: string = currency_hash_default): void {
         this.currency_pair = Client.getCurrencyPair(hash);
         this.loadHistory();
         this.ws = new WebSocket(this.getWebsocketURL());
@@ -962,12 +1009,31 @@ class Client {
             }
         };
     }
-    public dispose(): void {
-        this.ws.close();
+    public clear(): void {
+        if (this.resize_timeid > 0) {
+            window.clearTimeout(this.resize_timeid);
+            this.resize_timeid = 0;
+        }
+        this.ws?.close();
+        this.ws = undefined;
         this.graph?.dispose();
         this.graph = undefined;
     }
-    private static getCurrencyPair(hash: string = "#btc_jpy"): CurrencyPair {
+    public resize(): void {
+        this.graph?.resize();
+        this.graph?.draw(true);
+    }
+    public changesize(): void {
+        if (this.resize_timeid > 0) {
+            window.clearTimeout(this.resize_timeid);
+            this.resize_timeid = 0;
+        }
+        this.resize_timeid = window.setTimeout(() => {
+            this.resize();
+            this.resize_timeid = 0;
+        }, 128);
+    }
+    private static getCurrencyPair(hash: string = currency_hash_default): CurrencyPair {
         const cp = hash.slice(1);
         return currency_pair_list.find(data => data === cp) ?? currency_pair_list[0];
     }
@@ -1214,9 +1280,3 @@ const vm = new Vue({
     }
 });
 let cli = new Client(location.hash);
-window.addEventListener("hashchange", () => {
-    dispdata.focus.xaxis.selected = focusXAxisSec;
-    dispdata.focus.fps.selected = focusUpdateIntervalFPS;
-    cli?.dispose();
-    cli = new Client(location.hash);
-}, false);
