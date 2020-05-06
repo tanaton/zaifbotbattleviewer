@@ -462,7 +462,7 @@ class Graph {
         this.focus_legend = this.dom.selectAll<HTMLDivElement, Legend>(".focus-legend")
             .data(this.focus_data_legend)
             .enter().append("div")
-            .attr("class", "col-4 focus-legend");
+            .attr("class", "col-6 col-sm-4 col-xl-3 focus-legend");
 
         this.summary = this.svg.selectAll<SVGGElement, Context>(".summary")
             .data(this.summary_data)

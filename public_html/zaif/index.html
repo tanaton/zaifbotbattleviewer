@@ -5,7 +5,7 @@
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-    <title>zaifの取引を表示するやつ</title>
+    <title>取引の様子</title>
     <link rel="stylesheet" href="/css/bootstrap.min.css">
     <style>
         body {
@@ -96,11 +96,9 @@
 
 <body class="bg-light text-dark">
     <div id="container">
-        <nav class="navbar fixed-top navbar-expand-lg navbar-light bg-light text-dark">
+        <nav class="navbar fixed-top navbar-expand-xl navbar-light bg-light text-dark">
             <span class="navbar-brand" v-cloak>
-                zaifの取引を表示するやつ ({{ currency_pair.first }}/{{ currency_pair.second }})
-            </span>
-            <span class="navbar-brand" v-cloak>
+                取引の様子 ({{ currency_pair.first }}/{{ currency_pair.second }})&nbsp;
                 <span :class="last_trade.type">
                     {{ last_trade.price }} {{ last_trade.action }}
                 </span>
@@ -123,26 +121,26 @@
             </div>
         </nav>
         <main class="container" role="main">
-            <div class="row justify-content-center">
+            <div class="row">
                 <div class="col-xl-9">
                     <div class="row">
-                        <div class="col-4 align-self-start">
+                        <div class="col-12 col-md-6 align-self-start">
                             <h1>取引の様子</h1>
                         </div>
-                        <div class="col-4 align-self-end">
-                            <div class="form-group row justify-content-end" v-cloak>
-                                <label for="staticFocusFps" class="col-sm-4 col-form-label">更新間隔</label>
-                                <select class="form-control col-sm-4" v-model="focus.fps.selected">
+                        <div class="col-6 col-md-3 align-self-end">
+                            <div class="form-group form-row" v-cloak>
+                                <label for="staticFocusFps" class="col-6 col-form-label">更新間隔</label>
+                                <select class="col-6 form-control" v-model="focus.fps.selected">
                                     <option v-for="option in focus.fps.options" v-bind:value="option.value">
                                         {{ option.text }}
                                     </option>
                                 </select>
                             </div>
                         </div>
-                        <div class="col-4 align-self-end">
-                            <div class="form-group row justify-content-end" v-cloak>
-                                <label for="staticFocusTime" class="col-sm-4 col-form-label">表示時間</label>
-                                <select class="form-control col-sm-4" v-model="focus.xaxis.selected">
+                        <div class="col-6 col-md-3 align-self-end">
+                            <div class="form-group form-row" v-cloak>
+                                <label for="staticFocusTime" class="col-6 col-form-label">表示時間</label>
+                                <select class="col-6 form-control" v-model="focus.xaxis.selected">
                                     <option v-for="option in focus.xaxis.options" v-bind:value="option.value">
                                         {{ option.text }}
                                     </option>
@@ -181,7 +179,7 @@
                 </div>
             </div>
             <div class="row justify-content-center">
-                <div class="col-xl-6">
+                <div class="col-sm-6">
                     <h2>Bid</h2>
                     <div class="table-responsive">
                         <table class="table table-sm table-striped table-hover" v-cloak>
@@ -202,7 +200,7 @@
                         </table>
                     </div>
                 </div>
-                <div class="col-xl-6">
+                <div class="col-sm-6">
                     <h2>Ask</h2>
                     <div class="table-responsive">
                         <table class="table table-sm table-striped table-hover" v-cloak>
