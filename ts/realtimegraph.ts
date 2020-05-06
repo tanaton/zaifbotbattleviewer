@@ -240,8 +240,10 @@ const focusUpdateIntervalFPS = 10;
 const focusXAxisSec = 120;
 class ZaifDate {
     private diff: number;
+    private diffmax: number;
     constructor() {
         this.diff = 0;
+        this.diffmax = 0;
     }
     public set(timestamp: string): void {
         let zaif = Date.parse(timestamp);
@@ -262,10 +264,14 @@ class ZaifDate {
                 .map(atoi);
             zaif = d.length >= 7 ? (new Date(d[0], d[1] - 1, d[2], d[3], d[4], d[5], (d[6] / 1000) | 0)).getTime() : Date.now();
         }
-        this.diff = zaif - Date.now();
+        const diff = zaif - Date.now();
+        if (this.diffmax === 0 || diff < this.diffmax) {
+            this.diffmax = diff;
+        }
+        this.diff = diff;
     }
     public getDate(): Date {
-        return new Date(Date.now() + this.diff);
+        return new Date(Date.now() + this.diffmax);
     }
     public getDiff(): number {
         return this.diff;
@@ -705,8 +711,11 @@ class Graph {
             while (fd.values.length > 1000) {
                 fd.values.shift();
             }
-            while ((fd.values.length > 2) && (fd.values[0].date < datestart) && (fd.values[1].date < datestart)) {
+            while ((fd.values.length > 2) && (fd.values[0].date.getTime() < datestart.getTime()) && (fd.values[1].date.getTime() < datestart.getTime())) {
                 fd.values.shift();
+            }
+            if (fd.values[0].date.getTime() < datestart.getTime()) {
+                fd.values[0].date = datestart;
             }
             while (cd.values.length > 16000) {
                 cd.values.shift();
