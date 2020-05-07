@@ -1137,12 +1137,19 @@ class Client {
         let index = 0;
         for (const it of data) {
             dep += it[0] * it[1];
+            const price = it[0].toLocaleString();
+            const depth = (dep | 0).toLocaleString();
             if (dst[index] === undefined) {
-                dst[index] = { price: "", amount: 0, depth: "" };
+                dst[index] = {
+                    price: price,
+                    amount: it[1],
+                    depth: depth
+                };
+            } else {
+                dst[index].price = price;
+                dst[index].amount = it[1];
+                dst[index].depth = depth;
             }
-            dst[index].price = it[0].toLocaleString();
-            dst[index].amount = it[1];
-            dst[index].depth = (dep | 0).toLocaleString();
             ++index;
         }
     }

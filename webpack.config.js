@@ -7,11 +7,11 @@ module.exports = {
 		myasset: './ts/myasset.ts'
 	},
 	output: {
-		path: path.join(__dirname,'public_html/js'),
+		path: path.join(__dirname, 'public_html/js'),
 		filename: '[name].js'
 	},
 	resolve: {
-		extensions:['.ts','.js'],
+		extensions: ['.ts', '.js'],
 		alias: {
 			'vue$': 'vue/dist/vue.esm.js'
 		}
@@ -20,8 +20,14 @@ module.exports = {
 		rules: [
 			{
 				// 拡張子が.tsで終わるファイルに対して、TypeScriptコンパイラを適用する
-				test:/\.ts$/,loader:'ts-loader'
+				test: /\.ts$/, loader: 'ts-loader'
 			}
 		]
+	},
+	optimization: {
+		splitChunks: {
+			name: 'vendor',
+			chunks: 'initial'
+		}
 	}
 }
