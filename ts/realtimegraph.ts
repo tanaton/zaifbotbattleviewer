@@ -58,13 +58,13 @@ type Box = {
 }
 
 type TradeView = {
-    readonly tid: number;
-    readonly trade_type: DirectionEng;
-    readonly direction: Direction | "";
-    readonly price_orig: number;
-    readonly price: string;
-    readonly amount: number;
-    readonly date: string;
+    tid: number;
+    trade_type: DirectionEng;
+    direction: Direction | "";
+    price_orig: number;
+    price: string;
+    amount: number;
+    date: string;
 }
 
 type Board = {
@@ -235,15 +235,18 @@ const floatFormat = d3.format(".1f");
 const atoi = (str: string): number => parseInt(str, 10);
 const PriceMax = 10_000_000;
 const PriceMin = -10_000_000;
-const summaryUpdateInterval = 60 * 1000;	// 60秒
+const summaryUpdateInterval = 30 * 1000;	// 30秒
 const focusUpdateIntervalFPS = 10;
 const focusXAxisSec = 120;
 class ZaifDate {
     private diff: number;
     private diffmax: number;
+    private tmpdate: Date;
+
     constructor() {
         this.diff = 0;
         this.diffmax = 0;
+        this.tmpdate = new Date();
     }
     public set(timestamp: string): void {
         let zaif = Date.parse(timestamp);
@@ -262,7 +265,13 @@ class ZaifDate {
                 })
                 .reduce((a, c) => a.concat(c))
                 .map(atoi);
-            zaif = d.length >= 7 ? (new Date(d[0], d[1] - 1, d[2], d[3], d[4], d[5], (d[6] / 1000) | 0)).getTime() : Date.now();
+            if (d.length >= 7) {
+                this.tmpdate.setFullYear(d[0], d[1] - 1, d[2]);
+                this.tmpdate.setHours(d[3], d[4], d[5], (d[6] / 1000) | 0);
+                zaif = this.tmpdate.getTime();
+            } else {
+                zaif = Date.now();
+            }
         }
         const diff = zaif - Date.now();
         if (this.diffmax === 0 || diff < this.diffmax) {
@@ -272,6 +281,10 @@ class ZaifDate {
     }
     public getDate(): Date {
         return new Date(Date.now() + this.diffmax);
+    }
+    public getTime(): number {
+        this.tmpdate.setTime(Date.now() + this.diffmax);
+        return this.tmpdate.getTime();
     }
     public getDiff(): number {
         return this.diff;
@@ -350,25 +363,17 @@ class Graph {
     }];
     private ydtmp: readonly [ChartPathData, ChartPathData];
     private datamap: { [key in Signal]?: boolean } = {};
+    private tmpdate: Date;
 
     private draw_focus: boolean = false;
     private draw_summary: boolean = false;
-    private draw_summary_old_date: Date = fixDate.getDate();
+    private draw_summary_old_date: number = fixDate.getTime();
     private draw_depth: boolean = false;
     private focus_domain_yaxis_update: boolean = false;
     private focus_xaxis_sec: number = 120;
 
     constructor(obj: Stream) {
-        const div = document.getElementById(svgID);
-        const width = div?.offsetWidth ?? 850;
-        this.focus_width = width - this.focus_margin.left - this.focus_margin.right;
-        this.focus_height = Math.min(this.focus_width, 500);
-        this.summary_margin.top = this.focus_height + this.focus_margin.top + this.focus_margin.bottom + 10;
-        this.summary_width = width - this.summary_margin.left - this.summary_margin.right;
-        this.summary_height = 100;
-        this.depth_margin.top = this.summary_height + this.summary_margin.top + this.summary_margin.bottom + 10;
-        this.depth_width = width - this.depth_margin.left - this.depth_margin.right;
-        this.depth_height = 130;
+        this.tmpdate = new Date();
         this.ydtmp = [{
             date: obj.Date,
             data: PriceMax
@@ -679,13 +684,14 @@ class Graph {
     public addContext(data: Stream, lastflag?: boolean): void {
         const date = data.Date;
         const datestart = new Date(date.getTime() - (this.focus_xaxis_sec * 1000));
+        const datestart_unix = datestart.getTime();
         const l = this.focus_data.length;
         const sigs = data.Signals;
         if (!sigs) {
             return;
         }
         // 一定時間経過でsummary更新
-        if ((date.getTime() - summaryUpdateInterval) > this.draw_summary_old_date.getTime()) {
+        if ((date.getTime() - summaryUpdateInterval) > this.draw_summary_old_date) {
             this.draw_summary = true;
         }
         for (let i = 0; i < l; i++) {
@@ -711,10 +717,10 @@ class Graph {
             while (fd.values.length > 1000) {
                 fd.values.shift();
             }
-            while ((fd.values.length > 2) && (fd.values[0].date.getTime() < datestart.getTime()) && (fd.values[1].date.getTime() < datestart.getTime())) {
+            while ((fd.values.length > 2) && (fd.values[0].date.getTime() < datestart_unix) && (fd.values[1].date.getTime() < datestart_unix)) {
                 fd.values.shift();
             }
-            if (fd.values[0].date.getTime() < datestart.getTime()) {
+            if (fd.values[0].date.getTime() < datestart_unix) {
                 fd.values[0].date = datestart;
             }
             while (cd.values.length > 16000) {
@@ -723,7 +729,7 @@ class Graph {
             if (this.draw_summary || lastflag) {
                 // contextを要約してsummaryを作る
                 Graph.LTTB(sd.values, cd.values, 200);
-                this.draw_summary_old_date = date;
+                this.draw_summary_old_date = date.getTime();
             }
         }
     }
@@ -762,10 +768,12 @@ class Graph {
         return (num > it.data) ? num : it.data;
     }
     public updateFocusDomain(all = false): void {
-        const date = fixDate.getDate();
-        const datestart = new Date(date.getTime() - (this.focus_xaxis_sec * 1000));
-        const focus_xd = [datestart, date];
+        const date = fixDate.getTime();
+        const datestart = date - (this.focus_xaxis_sec * 1000);
+        const focus_xd = this.focus_x.domain();
         const ydtmp = this.ydtmp;
+        focus_xd[0].setTime(datestart);
+        focus_xd[1].setTime(date);
 
         // 縦軸の値の幅を設定
         if (this.focus_domain_yaxis_update === false && all === false) {
@@ -774,23 +782,23 @@ class Graph {
                 if (l >= 0) {
                     const data = fd.values[l].data;
                     if (ydtmp[0].data > data) {
-                        ydtmp[0].date = date;
+                        ydtmp[0].date.setTime(date);
                         ydtmp[0].data = data;
                     } else if (ydtmp[1].data < data) {
-                        ydtmp[1].date = date;
+                        ydtmp[1].date.setTime(date);
                         ydtmp[1].data = data;
                     }
                 }
             }
         }
         // 現在の最大最小が表示外になった場合
-        if (ydtmp[0].date < datestart || this.focus_domain_yaxis_update || all) {
+        if (ydtmp[0].date.getTime() < datestart || this.focus_domain_yaxis_update || all) {
             ydtmp[0].data = this.focus_data.reduce((num, it) => {
                 const data = it.values.reduce(Graph.contextMinFunc, PriceMax);
                 return (num < data) ? num : data;
             }, PriceMax);
         }
-        if (ydtmp[1].date < datestart || this.focus_domain_yaxis_update || all) {
+        if (ydtmp[1].date.getTime() < datestart || this.focus_domain_yaxis_update || all) {
             ydtmp[1].data = this.focus_data.reduce((num, it) => {
                 const data = it.values.reduce(Graph.contextMaxFunc, PriceMin);
                 return (num > data) ? num : data;
@@ -801,18 +809,18 @@ class Graph {
         this.focus_y.domain([ydtmp[0].data, ydtmp[1].data]).nice();
     }
     public updateSummaryDomain(all = false): void {
-        const date = fixDate.getDate();
+        const date = fixDate.getTime();
         const summary_xd = this.summary_x.domain();
         const summary_yd = this.summary_y.domain();
-        summary_xd[0] = date;
-        summary_xd[1] = date;
+        summary_xd[0].setTime(date);
+        summary_xd[1].setTime(date);
 
         if (all) {
             for (const cd of this.summary_data) {
                 summary_yd[0] = cd.values.reduce(Graph.contextMinFunc, summary_yd[0]);
                 summary_yd[1] = cd.values.reduce(Graph.contextMaxFunc, summary_yd[1]);
-                if (summary_xd[0] > cd.values[0].date) {
-                    summary_xd[0] = cd.values[0].date;
+                if (summary_xd[0].getTime() > cd.values[0].date.getTime()) {
+                    summary_xd[0].setTime(cd.values[0].date.getTime());
                 }
             }
         } else {
@@ -827,8 +835,8 @@ class Graph {
                     if (summary_yd[1] < data) {
                         summary_yd[1] = data;
                     }
-                    if (summary_xd[0] > cd.values[0].date) {
-                        summary_xd[0] = cd.values[0].date;
+                    if (summary_xd[0].getTime() > cd.values[0].date.getTime()) {
+                        summary_xd[0].setTime(cd.values[0].date.getTime());
                     }
                 }
             }
@@ -864,11 +872,11 @@ class Graph {
         return a.date.getTime() - b.date.getTime();
     }
     public setFocusXAxis(sec: number = 120): void {
-        const datestart = new Date(fixDate.getDate().getTime() - (sec * 1000));
+        const datestart = fixDate.getTime() - (sec * 1000);
         const l = this.focus_data.length;
         for (let i = 0; i < l; i++) {
             const cv = this.context_data[i].values;
-            const j = cv.findIndex(it => it.date >= datestart);
+            const j = cv.findIndex(it => it.date.getTime() >= datestart);
             if (j >= 0) {
                 this.focus_data[i].values = cv.slice(j);
             }
@@ -986,8 +994,10 @@ class Client {
     private ws?: WebSocket;
     private currency_pair: CurrencyPair = Client.getCurrencyPair(currency_hash_default);
     private resize_timeid: number = 0;
+    private tmpdate: Date;
 
     constructor(hash: string = currency_hash_default) {
+        this.tmpdate = new Date();
         this.init(hash);
         window.addEventListener("resize", () => this.changesize(), false);
         window.addEventListener("orientationchange", () => this.changesize(), false);
@@ -1113,15 +1123,26 @@ class Client {
                     dir = Client.getDirection(it.trade_type);
                 }
             }
-            dispdata.trades[i] = {
-                tid: it.tid,
-                trade_type: it.trade_type,
-                direction: dir,
-                price_orig: it.price,
-                price: it.price.toLocaleString(),
-                amount: it.amount,
-                date: timeFormat(new Date(it.date * 1000))
-            };
+            this.tmpdate.setTime(it.date * 1000);
+            if (dispdata.trades[i] === undefined) {
+                dispdata.trades[i] = {
+                    tid: it.tid,
+                    trade_type: it.trade_type,
+                    direction: dir,
+                    price_orig: it.price,
+                    price: it.price.toLocaleString(),
+                    amount: it.amount,
+                    date: timeFormat(this.tmpdate)
+                };
+            } else {
+                dispdata.trades[i].tid = it.tid;
+                dispdata.trades[i].trade_type = it.trade_type;
+                dispdata.trades[i].direction = dir;
+                dispdata.trades[i].price_orig = it.price;
+                dispdata.trades[i].price = it.price.toLocaleString();
+                dispdata.trades[i].amount = it.amount;
+                dispdata.trades[i].date = timeFormat(this.tmpdate);
+            }
         }
         this.analyzeBoard(dispdata.bids, obj.bids);
         this.analyzeBoard(dispdata.asks, obj.asks);
