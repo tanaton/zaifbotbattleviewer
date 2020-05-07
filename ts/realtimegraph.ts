@@ -153,7 +153,7 @@ type StreamSignals = {
 };
 type Stream = {
     readonly Name: CurrencyPair | "";
-    readonly Date: Date;
+    readonly Date: number;
     readonly Signals?: StreamSignals;
     readonly Depths?: {
         Asks?: readonly [number, number][],
@@ -162,7 +162,7 @@ type Stream = {
 }
 
 type ChartPathData = {
-    date: Date;
+    date: number;
     data: number;
 }
 
@@ -279,6 +279,10 @@ class ZaifDate {
         }
         this.diff = diff;
     }
+    public reset(): void {
+        this.diff = 0;
+        this.diffmax = 0;
+    }
     public getDate(): Date {
         return new Date(Date.now() + this.diffmax);
     }
@@ -363,7 +367,6 @@ class Graph {
     }];
     private ydtmp: readonly [ChartPathData, ChartPathData];
     private datamap: { [key in Signal]?: boolean } = {};
-    private tmpdate: Date;
 
     private draw_focus: boolean = false;
     private draw_summary: boolean = false;
@@ -373,7 +376,6 @@ class Graph {
     private focus_xaxis_sec: number = 120;
 
     constructor(obj: Stream) {
-        this.tmpdate = new Date();
         this.ydtmp = [{
             date: obj.Date,
             data: PriceMax
@@ -540,7 +542,7 @@ class Graph {
         this.tid = window.setInterval((): void => {
             const data: Stream = {
                 Name: "",
-                Date: fixDate.getDate(),
+                Date: fixDate.getTime(),
                 Signals: {
                     "Asks": { Data: 0 },
                     "Bids": { Data: 0 },
@@ -683,15 +685,14 @@ class Graph {
     }
     public addContext(data: Stream, lastflag?: boolean): void {
         const date = data.Date;
-        const datestart = new Date(date.getTime() - (this.focus_xaxis_sec * 1000));
-        const datestart_unix = datestart.getTime();
+        const datestart = date - (this.focus_xaxis_sec * 1000);
         const l = this.focus_data.length;
         const sigs = data.Signals;
         if (!sigs) {
             return;
         }
         // 一定時間経過でsummary更新
-        if ((date.getTime() - summaryUpdateInterval) > this.draw_summary_old_date) {
+        if ((date - summaryUpdateInterval) > this.draw_summary_old_date) {
             this.draw_summary = true;
         }
         for (let i = 0; i < l; i++) {
@@ -717,10 +718,10 @@ class Graph {
             while (fd.values.length > 1000) {
                 fd.values.shift();
             }
-            while ((fd.values.length > 2) && (fd.values[0].date.getTime() < datestart_unix) && (fd.values[1].date.getTime() < datestart_unix)) {
+            while ((fd.values.length > 2) && (fd.values[0].date < datestart) && (fd.values[1].date < datestart)) {
                 fd.values.shift();
             }
-            if (fd.values[0].date.getTime() < datestart_unix) {
+            if (fd.values[0].date < datestart) {
                 fd.values[0].date = datestart;
             }
             while (cd.values.length > 16000) {
@@ -729,7 +730,7 @@ class Graph {
             if (this.draw_summary || lastflag) {
                 // contextを要約してsummaryを作る
                 Graph.LTTB(sd.values, cd.values, 200);
-                this.draw_summary_old_date = date.getTime();
+                this.draw_summary_old_date = date;
             }
         }
     }
@@ -744,18 +745,20 @@ class Graph {
             let dep = 0;
             let index = 0;
             if (values[index] === undefined) {
-                values[index] = { price: 0, depth: 0 };
+                values[index] = { price: it[0][0], depth: 0 };
+            } else {
+                values[index].price = it[0][0];
+                values[index].depth = 0;
             }
-            values[index].price = it[0][0];
-            values[index].depth = 0;
             ++index;
             for (const val of it) {
                 dep += val[0] * val[1];
                 if (values[index] === undefined) {
-                    values[index] = { price: 0, depth: 0 };
+                    values[index] = { price: val[0], depth: dep };
+                } else {
+                    values[index].price = val[0];
+                    values[index].depth = dep;
                 }
-                values[index].price = val[0];
-                values[index].depth = dep;
                 ++index;
             }
             this.draw_depth = true;
@@ -770,10 +773,8 @@ class Graph {
     public updateFocusDomain(all = false): void {
         const date = fixDate.getTime();
         const datestart = date - (this.focus_xaxis_sec * 1000);
-        const focus_xd = this.focus_x.domain();
+        const focus_xd = [datestart, date];
         const ydtmp = this.ydtmp;
-        focus_xd[0].setTime(datestart);
-        focus_xd[1].setTime(date);
 
         // 縦軸の値の幅を設定
         if (this.focus_domain_yaxis_update === false && all === false) {
@@ -782,23 +783,23 @@ class Graph {
                 if (l >= 0) {
                     const data = fd.values[l].data;
                     if (ydtmp[0].data > data) {
-                        ydtmp[0].date.setTime(date);
+                        ydtmp[0].date = date;
                         ydtmp[0].data = data;
                     } else if (ydtmp[1].data < data) {
-                        ydtmp[1].date.setTime(date);
+                        ydtmp[1].date = date;
                         ydtmp[1].data = data;
                     }
                 }
             }
         }
         // 現在の最大最小が表示外になった場合
-        if (ydtmp[0].date.getTime() < datestart || this.focus_domain_yaxis_update || all) {
+        if (ydtmp[0].date < datestart || this.focus_domain_yaxis_update || all) {
             ydtmp[0].data = this.focus_data.reduce((num, it) => {
                 const data = it.values.reduce(Graph.contextMinFunc, PriceMax);
                 return (num < data) ? num : data;
             }, PriceMax);
         }
-        if (ydtmp[1].date.getTime() < datestart || this.focus_domain_yaxis_update || all) {
+        if (ydtmp[1].date < datestart || this.focus_domain_yaxis_update || all) {
             ydtmp[1].data = this.focus_data.reduce((num, it) => {
                 const data = it.values.reduce(Graph.contextMaxFunc, PriceMin);
                 return (num > data) ? num : data;
@@ -810,17 +811,15 @@ class Graph {
     }
     public updateSummaryDomain(all = false): void {
         const date = fixDate.getTime();
-        const summary_xd = this.summary_x.domain();
+        const summary_xd = [date, date];
         const summary_yd = this.summary_y.domain();
-        summary_xd[0].setTime(date);
-        summary_xd[1].setTime(date);
 
         if (all) {
             for (const cd of this.summary_data) {
                 summary_yd[0] = cd.values.reduce(Graph.contextMinFunc, summary_yd[0]);
                 summary_yd[1] = cd.values.reduce(Graph.contextMaxFunc, summary_yd[1]);
-                if (summary_xd[0].getTime() > cd.values[0].date.getTime()) {
-                    summary_xd[0].setTime(cd.values[0].date.getTime());
+                if (summary_xd[0] > cd.values[0].date) {
+                    summary_xd[0] = cd.values[0].date;
                 }
             }
         } else {
@@ -835,8 +834,8 @@ class Graph {
                     if (summary_yd[1] < data) {
                         summary_yd[1] = data;
                     }
-                    if (summary_xd[0].getTime() > cd.values[0].date.getTime()) {
-                        summary_xd[0].setTime(cd.values[0].date.getTime());
+                    if (summary_xd[0] > cd.values[0].date) {
+                        summary_xd[0] = cd.values[0].date;
                     }
                 }
             }
@@ -869,16 +868,16 @@ class Graph {
         }
     }
     public static compChartPathData(a: ChartPathData, b: ChartPathData): number {
-        return a.date.getTime() - b.date.getTime();
+        return a.date - b.date;
     }
     public setFocusXAxis(sec: number = 120): void {
         const datestart = fixDate.getTime() - (sec * 1000);
         const l = this.focus_data.length;
         for (let i = 0; i < l; i++) {
             const cv = this.context_data[i].values;
-            const j = cv.findIndex(it => it.date.getTime() >= datestart);
-            if (j >= 0) {
-                this.focus_data[i].values = cv.slice(j);
+            const j = cv.findIndex(it => it.date >= datestart);
+            if (j >= 1) {
+                this.focus_data[i].values = cv.slice(j - 1);
             }
         }
         this.focus_domain_yaxis_update = true;
@@ -961,19 +960,19 @@ class Graph {
             let avgX: Float = 0;
             let avgY: Float = 0;
             for (; avgRangeStart < avgRangeEnd; avgRangeStart++) {
-                avgX += src[avgRangeStart].date.getTime();
+                avgX += src[avgRangeStart].date;
                 avgY += src[avgRangeStart].data;
             }
             avgX /= avgRangeLength;
             avgY /= avgRangeLength;
             // Point a
-            const pointAX = src[a].date.getTime();
+            const pointAX = src[a].date;
             const pointAY = src[a].data;
             let maxArea: Float = PriceMin;
             for (; bucketStart < bucketCenter; bucketStart++) {
                 const d = src[bucketStart];
                 // Calculate triangle area over three buckets
-                const area = abs(((pointAX - avgX) * (d.data - pointAY)) - ((pointAX - d.date.getTime()) * (avgY - pointAY)));
+                const area = abs(((pointAX - avgX) * (d.data - pointAY)) - ((pointAX - d.date) * (avgY - pointAY)));
                 if (area > maxArea) {
                     maxArea = area;
                     a = bucketStart;			// Next a is this b
@@ -1009,6 +1008,7 @@ class Client {
         }, false);
     }
     public init(hash: string = currency_hash_default): void {
+        fixDate.reset();    // 時間補正を初期化
         this.currency_pair = Client.getCurrencyPair(hash);
         this.loadHistory();
         this.ws = new WebSocket(this.getWebsocketURL());
@@ -1067,7 +1067,7 @@ class Client {
         fixDate.set(obj.timestamp);
         const data: Stream = {
             Name: obj.currency_pair,
-            Date: fixDate.getDate(),
+            Date: fixDate.getTime(),
             Signals: {
                 Asks: {
                     Data: obj.asks[0][0]
@@ -1183,7 +1183,7 @@ class Client {
         xhr.ontimeout = (): void => {
             console.error(`The request for ${url} timed out.`);
         };
-        xhr.onload = (e): void => {
+        xhr.onload = (): void => {
             if (xhr.readyState === 4) {
                 if (xhr.status === 200) {
                     console.log("履歴の取得に成功");
@@ -1193,7 +1193,7 @@ class Client {
                 }
             }
         };
-        xhr.onerror = (e): void => {
+        xhr.onerror = (): void => {
             console.error(xhr.statusText);
         };
         xhr.open("GET", url, true);
@@ -1219,7 +1219,7 @@ class Client {
             if (ask !== undefined && bid !== undefined && trade !== undefined) {
                 const obj: Stream = {
                     Name: this.currency_pair,
-                    Date: new Date(it.ts * 1000),
+                    Date: it.ts * 1000,
                     Signals: {
                         Asks: {
                             Data: ask[0]
