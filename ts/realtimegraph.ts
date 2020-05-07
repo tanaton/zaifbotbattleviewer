@@ -740,35 +740,36 @@ class Graph {
         this.addDepthSub(deps.Bids, this.depth_data[1]);
     }
     private addDepthSub(it: readonly [number, number][] | undefined, data: Depth): void {
-        if (it) {
-            const values = data.values;
-            let dep = 0;
-            let index = 0;
+        if (!it) {
+            return;
+        }
+        const values = data.values;
+        let dep = 0;
+        let index = 0;
+        if (values[index] === undefined) {
+            values[index] = { price: it[0][0], depth: 0 };
+        } else {
+            values[index].price = it[0][0];
+            values[index].depth = 0;
+        }
+        ++index;
+        for (const val of it) {
+            dep += val[0] * val[1];
             if (values[index] === undefined) {
-                values[index] = { price: it[0][0], depth: 0 };
+                values[index] = { price: val[0], depth: dep };
             } else {
-                values[index].price = it[0][0];
-                values[index].depth = 0;
+                values[index].price = val[0];
+                values[index].depth = dep;
             }
             ++index;
-            for (const val of it) {
-                dep += val[0] * val[1];
-                if (values[index] === undefined) {
-                    values[index] = { price: val[0], depth: dep };
-                } else {
-                    values[index].price = val[0];
-                    values[index].depth = dep;
-                }
-                ++index;
-            }
-            this.draw_depth = true;
         }
+        this.draw_depth = true;
     }
     public static contextMinFunc(num: number, it: ChartPathData): number {
-        return (num < it.data) ? num : it.data;
+        return Math.min(num, it.data);
     }
     public static contextMaxFunc(num: number, it: ChartPathData): number {
-        return (num > it.data) ? num : it.data;
+        return Math.max(num, it.data);
     }
     public updateFocusDomain(all = false): void {
         const date = fixDate.getTime();
@@ -796,61 +797,42 @@ class Graph {
         if (ydtmp[0].date < datestart || this.focus_domain_yaxis_update || all) {
             ydtmp[0].data = this.focus_data.reduce((num, it) => {
                 const data = it.values.reduce(Graph.contextMinFunc, PriceMax);
-                return (num < data) ? num : data;
+                return Math.min(num, data);
             }, PriceMax);
         }
         if (ydtmp[1].date < datestart || this.focus_domain_yaxis_update || all) {
             ydtmp[1].data = this.focus_data.reduce((num, it) => {
                 const data = it.values.reduce(Graph.contextMaxFunc, PriceMin);
-                return (num > data) ? num : data;
+                return Math.max(num, data);
             }, PriceMin);
         }
         this.focus_domain_yaxis_update = false;
         this.focus_x.domain(focus_xd);
         this.focus_y.domain([ydtmp[0].data, ydtmp[1].data]).nice();
     }
-    public updateSummaryDomain(all = false): void {
+    public updateSummaryDomain(): void {
         const date = fixDate.getTime();
         const summary_xd = [date, date];
         const summary_yd = this.summary_y.domain();
 
-        if (all) {
-            for (const cd of this.summary_data) {
-                summary_yd[0] = cd.values.reduce(Graph.contextMinFunc, summary_yd[0]);
-                summary_yd[1] = cd.values.reduce(Graph.contextMaxFunc, summary_yd[1]);
-                if (summary_xd[0] > cd.values[0].date) {
-                    summary_xd[0] = cd.values[0].date;
-                }
-            }
-        } else {
-            for (const cd of this.summary_data) {
-                const l = cd.values.length - 1;
-                if (l >= 0) {
-                    const data = cd.values[l].data;
-                    // 最大値の更新
-                    if (summary_yd[0] > data) {
-                        summary_yd[0] = data;
-                    }
-                    if (summary_yd[1] < data) {
-                        summary_yd[1] = data;
-                    }
-                    if (summary_xd[0] > cd.values[0].date) {
-                        summary_xd[0] = cd.values[0].date;
-                    }
-                }
+        for (const cd of this.summary_data) {
+            summary_yd[0] = cd.values.reduce(Graph.contextMinFunc, PriceMax);
+            summary_yd[1] = cd.values.reduce(Graph.contextMaxFunc, PriceMin);
+            if (summary_xd[0] > cd.values[0].date) {
+                summary_xd[0] = cd.values[0].date;
             }
         }
         this.summary_x.domain(summary_xd);
         this.summary_y.domain(summary_yd).nice();
     }
     public static depthMaxFunc(num: number, it: ChartDepthData): number {
-        return (num > it.depth) ? num : it.depth;
+        return Math.max(num, it.depth);
     }
     public updateDepthDomain(): void {
         const depth_xd = this.depth_x.domain();
         const depth_yd = this.depth_y.domain();
-        depth_xd[0] = this.depth_data[1].values.reduce((num, it) => (num < it.price) ? num : it.price, PriceMax);
-        depth_xd[1] = this.depth_data[0].values.reduce((num, it) => (num > it.price) ? num : it.price, PriceMin);
+        depth_xd[0] = this.depth_data[1].values.reduce((num, it) => Math.min(num, it.price), PriceMax);
+        depth_xd[1] = this.depth_data[0].values.reduce((num, it) => Math.max(num, it.price), PriceMin);
         depth_yd[0] = 0;
         depth_yd[1] = Math.max(
             this.depth_data[0].values.reduce(Graph.depthMaxFunc, PriceMin),
@@ -873,9 +855,10 @@ class Graph {
     public setFocusXAxis(sec: number = 120): void {
         const datestart = fixDate.getTime() - (sec * 1000);
         const l = this.focus_data.length;
+        const f = (it: ChartPathData): boolean => it.date >= datestart;
         for (let i = 0; i < l; i++) {
             const cv = this.context_data[i].values;
-            const j = cv.findIndex(it => it.date >= datestart);
+            const j = cv.findIndex(f);
             if (j >= 1) {
                 this.focus_data[i].values = cv.slice(j - 1);
             }
@@ -923,6 +906,7 @@ class Graph {
         }
     }
 
+    // Largest Triangle Three Bucketsアルゴリズム
     // https://github.com/dgryski/go-lttb を参考に作成
     public static LTTB(dst: ChartPathData[], src: readonly ChartPathData[], threshold: number = 200): void {
         let index = 0;
@@ -1173,7 +1157,7 @@ class Client {
     }
     private addData(obj: Stream): void {
         if (this.graph !== undefined) {
-            this.graph.addContext(obj, true);
+            this.graph.addContext(obj);
             this.graph.addDepth(obj);
         }
     }
@@ -1243,7 +1227,7 @@ class Client {
         if (ask !== undefined && bid !== undefined && trade !== undefined && this.graph) {
             this.graph.sortContext();
             this.graph.updateFocusDomain(true);
-            this.graph.updateSummaryDomain(true);
+            this.graph.updateSummaryDomain();
             this.graph.draw(true);
         }
     }
