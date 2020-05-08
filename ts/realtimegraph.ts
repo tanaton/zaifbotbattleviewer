@@ -1304,10 +1304,7 @@ const vm = new Vue({
         "last_trade.price": function () {
             // ナビゲーションバーの高さが変動したことを検知したい
             this.$nextTick(function () {
-                const h = (this.$refs.nav as Element).clientHeight;
-                if (this.header_height < h) {
-                    this.header_height = h;
-                }
+                this.header_height = (this.$refs.nav as Element).clientHeight;
             });
         }
     }
