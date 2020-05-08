@@ -86,22 +86,25 @@ type History = {
     readonly trade?: HistoryTrade;
 }
 
+type ZaifBoard = [number, number];
+type ZaifTrade = {
+    tid: number;
+    trade_type: DirectionEng;
+    price: number;
+    amount: number;
+    date: number;
+}
+type ZaifLastPrice = {
+    price: number;
+    action: DirectionEng;
+}
 type ZaifStream = {
-    readonly currency_pair: CurrencyPair;
-    readonly timestamp: string;
-    asks: readonly [number, number][];
-    bids: readonly [number, number][];
-    trades: readonly {
-        readonly tid: number;
-        readonly trade_type: DirectionEng;
-        readonly price: number;
-        readonly amount: number;
-        readonly date: number;
-    }[];
-    readonly last_price: {
-        readonly price: number;
-        readonly action: DirectionEng;
-    };
+    currency_pair: CurrencyPair;
+    timestamp: string;
+    asks: ZaifBoard[];
+    bids: ZaifBoard[];
+    trades: ZaifTrade[];
+    last_price: ZaifLastPrice;
 }
 function isZaifStream(a: any): a is ZaifStream {
     if ((a instanceof Object) === false) {
@@ -148,16 +151,16 @@ function isZaifStream(a: any): a is ZaifStream {
 
 type StreamSignals = {
     [key in Signal]: {
-        readonly Data: number;
+        Data: number;
     };
 };
 type Stream = {
-    readonly Name: CurrencyPair | "";
-    readonly Date: number;
-    readonly Signals?: StreamSignals;
-    readonly Depths?: {
-        Asks?: readonly [number, number][],
-        Bids?: readonly [number, number][]
+    Name: CurrencyPair | "";
+    Date: number;
+    Signals: StreamSignals;
+    Depths?: {
+        Asks?: [number, number][],
+        Bids?: [number, number][]
     };
 }
 
@@ -531,28 +534,27 @@ class Graph {
     private init(data: Stream): void {
         this.summary_color.domain([]);
         this.addsig(data);
-        //this.addContext(data);
-        //this.addDepth(data);
         this.startTimer(focusUpdateIntervalFPS);
     }
     private startTimer(fps: number): void {
         if (fps <= 0) {
             return
         }
+        const data: Stream = {
+            Name: "",
+            Date: 0,
+            Signals: {
+                Asks: { Data: 0 },
+                Bids: { Data: 0 },
+                LastPrice: { Data: 0 }
+            }
+        };
         this.tid = window.setInterval((): void => {
-            const data: Stream = {
-                Name: "",
-                Date: fixDate.getTime(),
-                Signals: {
-                    "Asks": { Data: 0 },
-                    "Bids": { Data: 0 },
-                    "LastPrice": { Data: 0 }
-                }
-            };
             let flag = false;
+            data.Date = fixDate.getTime();
             for (const it of this.context_data) {
                 const val = it.values;
-                if (val.length > 0 && data.Signals !== undefined) {
+                if (val.length > 0) {
                     data.Signals[it.name] = {
                         Data: val[val.length - 1].data
                     };
@@ -1196,6 +1198,21 @@ class Client {
         let bid: readonly [number, number] | undefined = undefined;
         let trade: HistoryTrade | undefined = undefined;
         const len = data.length - 1;
+        const obj: Stream = {
+            Name: this.currency_pair,
+            Date: 0,
+            Signals: {
+                Asks: {
+                    Data: 0
+                },
+                Bids: {
+                    Data: 0
+                },
+                LastPrice: {
+                    Data: 0
+                }
+            }
+        };
         for (let index = 0; index <= len; ++index) {    // -1したlengthを後で利用する
             const it = data[index];
             if (it.ask !== undefined) {
@@ -1208,21 +1225,10 @@ class Client {
                 trade = it.trade;
             }
             if (ask !== undefined && bid !== undefined && trade !== undefined) {
-                const obj: Stream = {
-                    Name: this.currency_pair,
-                    Date: it.ts * 1000,
-                    Signals: {
-                        Asks: {
-                            Data: ask[0]
-                        },
-                        Bids: {
-                            Data: bid[0]
-                        },
-                        LastPrice: {
-                            Data: trade.price
-                        }
-                    }
-                };
+                obj.Date = it.ts * 1000;
+                obj.Signals.Asks.Data = ask[0];
+                obj.Signals.Bids.Data = bid[0];
+                obj.Signals.LastPrice.Data = trade.price;
                 if (this.graph === undefined) {
                     this.createGraph(obj);
                 }
