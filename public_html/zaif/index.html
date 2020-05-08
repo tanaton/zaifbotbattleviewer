@@ -11,9 +11,6 @@
         body {
             font: sans-serif;
             min-height: 75rem;
-        }
-
-        #container {
             padding-top: 5.5rem;
         }
 
@@ -98,13 +95,13 @@
 </head>
 
 <body class="bg-light text-dark">
-    <div id="container" :style="header_padding_top">
+    <div id="container">
         <nav class="navbar fixed-top navbar-expand-xl navbar-light bg-light text-dark" ref="nav">
             <span class="navbar-brand" v-cloak>
-                取引の様子 ({{ currency_pair.first }}/{{ currency_pair.second }})&nbsp;
                 <span :class="last_trade.type">
-                    {{ last_trade.price }} {{ last_trade.action }}
+                    {{ last_trade.action }} {{ last_trade.price }}
                 </span>
+                &nbsp;({{ currency_pair.first }}/{{ currency_pair.second }})
             </span>
             <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarText">
                 <span class="navbar-toggler-icon"></span>
@@ -158,7 +155,7 @@
                     <span v-cloak>1{{ currency_pair.first }}の現在価格 ({{ currency_pair.second }})</span>
                     <p>
                         <span id="last-trade" :class="last_trade.type" v-cloak>
-                            {{ last_trade.price }} {{ last_trade.action }}
+                            {{ last_trade.action }} {{ last_trade.price }}
                         </span>
                     </p>
                     <div class="table-responsive">

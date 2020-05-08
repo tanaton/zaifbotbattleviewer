@@ -11,9 +11,6 @@
         body {
             font: sans-serif;
             min-height: 75rem;
-        }
-
-        #container {
             padding-top: 5.5rem;
         }
 
@@ -102,8 +99,9 @@
     <div id="container">
         <nav class="navbar fixed-top navbar-expand-xl navbar-light bg-light text-dark">
             <span class="navbar-brand">
-                資産の様子&nbsp;<span :class="last_trade.type" v-cloak>
-                    {{ asset_now }} {{ last_trade.action }}
+                資産の様子&nbsp;
+                <span :class="last_trade.type" v-cloak>
+                    {{ last_trade.action }} {{ asset_now }}
                 </span>
             </span>
             <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarText">
@@ -127,7 +125,7 @@
             <h2 v-cloak>現在 (jpy)</h2>
             <p>
                 <span id="last-trade" :class="last_trade.type" v-cloak>
-                    {{ asset_now }} ({{ asset_per }}%) {{ last_trade.action }}
+                    {{ last_trade.action }} {{ asset_now }} ({{ asset_per }}%)
                 </span>
             </p>
             <hr>

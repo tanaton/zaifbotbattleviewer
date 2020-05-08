@@ -216,7 +216,6 @@ type Display = {
         second: string;
     };
     date_diff: number;
-    header_height: number;
     readonly currencys: {
         readonly [key in CurrencyPair]: {
             readonly name: string;
@@ -1278,7 +1277,6 @@ const dispdata: Display = {
         second: "jpy"
     },
     date_diff: 0,
-    header_height: 0,
     currencys: {
         btc_jpy: { name: "btc/jpy", hash: "/zaif/#btc_jpy", active: "" },
         xem_jpy: { name: "xem/jpy", hash: "/zaif/#xem_jpy", active: "" },
@@ -1291,8 +1289,7 @@ const vm = new Vue({
     el: "#container",
     data: dispdata,
     computed: {
-        date_diff_print: () => (dispdata.date_diff / 1000).toString(),
-        header_padding_top: () => "padding-top:" + (dispdata.header_height > 0 ? `${dispdata.header_height + 10}px` : "5.5rem") + ";"
+        date_diff_print: () => (dispdata.date_diff / 1000).toString()
     },
     watch: {
         "focus.xaxis.selected": (n) => {
@@ -1300,12 +1297,6 @@ const vm = new Vue({
         },
         "focus.fps.selected": (n) => {
             cli.setGraphFocusFPS(n);
-        },
-        "last_trade.price": function () {
-            // ナビゲーションバーの高さが変動したことを検知したい
-            this.$nextTick(function () {
-                this.header_height = (this.$refs.nav as Element).clientHeight;
-            });
         }
     }
 });
