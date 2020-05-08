@@ -11,6 +11,9 @@
         body {
             font: sans-serif;
             min-height: 75rem;
+        }
+
+        #container {
             padding-top: 5.5rem;
         }
 
@@ -97,10 +100,9 @@
 
 <body class="bg-light text-dark">
     <div id="container">
-        <nav class="navbar fixed-top navbar-expand-lg navbar-light bg-light text-dark">
-            <span class="navbar-brand">資産の様子</span>
-            <span class="navbar-brand" v-cloak>
-                <span :class="last_trade.type">
+        <nav class="navbar fixed-top navbar-expand-xl navbar-light bg-light text-dark">
+            <span class="navbar-brand">
+                資産の様子&nbsp;<span :class="last_trade.type" v-cloak>
                     {{ asset_now }} {{ last_trade.action }}
                 </span>
             </span>

@@ -216,6 +216,7 @@ type Display = {
         second: string;
     };
     date_diff: number;
+    header_height: number;
     readonly currencys: {
         readonly [key in CurrencyPair]: {
             readonly name: string;
@@ -469,7 +470,7 @@ class Graph {
         this.focus_legend = this.dom.selectAll<HTMLDivElement, Legend>(".focus-legend")
             .data(this.focus_data_legend)
             .enter().append("div")
-            .attr("class", "col-6 col-sm-4 col-xl-3 focus-legend");
+            .attr("class", "col-12 col-sm-6 col-md-4 col-xl-3 focus-legend");
 
         this.summary = this.svg.selectAll<SVGGElement, Context>(".summary")
             .data(this.summary_data)
@@ -1277,6 +1278,7 @@ const dispdata: Display = {
         second: "jpy"
     },
     date_diff: 0,
+    header_height: 0,
     currencys: {
         btc_jpy: { name: "btc/jpy", hash: "/zaif/#btc_jpy", active: "" },
         xem_jpy: { name: "xem/jpy", hash: "/zaif/#xem_jpy", active: "" },
@@ -1289,7 +1291,8 @@ const vm = new Vue({
     el: "#container",
     data: dispdata,
     computed: {
-        date_diff_print: () => (dispdata.date_diff / 1000).toString()
+        date_diff_print: () => (dispdata.date_diff / 1000).toString(),
+        header_padding_top: () => "padding-top:" + (dispdata.header_height > 0 ? `${dispdata.header_height + 10}px` : "5.5rem") + ";"
     },
     watch: {
         "focus.xaxis.selected": (n) => {
@@ -1297,6 +1300,15 @@ const vm = new Vue({
         },
         "focus.fps.selected": (n) => {
             cli.setGraphFocusFPS(n);
+        },
+        "last_trade.price": function () {
+            // ナビゲーションバーの高さが変動したことを検知したい
+            this.$nextTick(function () {
+                const h = (this.$refs.nav as Element).clientHeight;
+                if (this.header_height < h) {
+                    this.header_height = h;
+                }
+            });
         }
     }
 });

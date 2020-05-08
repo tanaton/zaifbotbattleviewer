@@ -11,6 +11,9 @@
         body {
             font: sans-serif;
             min-height: 75rem;
+        }
+
+        #container {
             padding-top: 5.5rem;
         }
 
@@ -95,8 +98,8 @@
 </head>
 
 <body class="bg-light text-dark">
-    <div id="container">
-        <nav class="navbar fixed-top navbar-expand-xl navbar-light bg-light text-dark">
+    <div id="container" :style="header_padding_top">
+        <nav class="navbar fixed-top navbar-expand-xl navbar-light bg-light text-dark" ref="nav">
             <span class="navbar-brand" v-cloak>
                 取引の様子 ({{ currency_pair.first }}/{{ currency_pair.second }})&nbsp;
                 <span :class="last_trade.type">
