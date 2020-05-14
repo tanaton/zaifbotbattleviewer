@@ -710,7 +710,6 @@ class Graph {
             Graph.appendData(cd, cpd);
             this.focus_data_legend[i].last_price = d;
             // データサイズが大きくなり過ぎないように調節
-            // shift使っているから重い説
             while (fd.values.length > 1000) {
                 fd.values.shift();
             }
