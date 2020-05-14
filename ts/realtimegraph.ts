@@ -119,25 +119,19 @@ function isZaifStream(a: any): a is ZaifStream {
     if ((a.asks instanceof Array) === false) {
         return false;
     }
-    if ((a.asks as [number, number][]).every(it => it.length === 2) === false) {
+    if ((a.asks as ZaifBoard[]).every(it => it.length === 2) === false) {
         return false;
     }
     if ((a.bids instanceof Array) === false) {
         return false;
     }
-    if ((a.bids as [number, number][]).every(it => it.length === 2) === false) {
+    if ((a.bids as ZaifBoard[]).every(it => it.length === 2) === false) {
         return false;
     }
     if ((a.trades instanceof Array) === false) {
         return false;
     }
-    if ((a.trades as readonly {
-        readonly tid: number;
-        readonly trade_type: DirectionEng;
-        readonly price: number;
-        readonly amount: number;
-        readonly date: number;
-    }[]).every(it => isDirectionEng(it.trade_type)) === false) {
+    if ((a.trades as ZaifTrade[]).every(it => isDirectionEng(it.trade_type)) === false) {
         return false;
     }
     if ((a.last_price instanceof Object) === false) {
