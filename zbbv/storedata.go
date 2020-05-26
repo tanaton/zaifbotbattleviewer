@@ -53,7 +53,11 @@ func streamBufferWriteProc(key string, sda StoreDataArray) error {
 		return err
 	}
 	defer wfp.Close()
-	return gob.NewEncoder(wfp).Encode(sda)
+	err = gob.NewEncoder(wfp).Encode(sda)
+	if err != nil {
+		return err
+	}
+	return wfp.Sync()
 }
 
 func storeDataToJSON(buf []byte, sd StoreData) []byte {
@@ -230,7 +234,10 @@ func (si *StoreItem) store() error {
 	gz, _ := gzip.NewWriterLevel(wfp, gzip.BestSpeed)
 	defer gz.Close()
 	_, err = io.Copy(gz, rfp)
-	return err
+	if err != nil {
+		return err
+	}
+	return gz.Flush()
 }
 
 func (si *StoreItem) createPathTmp() string {

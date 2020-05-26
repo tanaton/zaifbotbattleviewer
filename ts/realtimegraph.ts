@@ -991,21 +991,15 @@ class Client {
         this.currency_pair = Client.getCurrencyPair(hash);
         this.loadHistory();
         this.ws = new WebSocket(this.getWebsocketURL());
-        this.ws.onopen = () => {
-            console.log('接続しました。');
-        };
-        this.ws.onerror = (error) => {
-            console.error(`WebSocket Error ${error}`);
-        };
-        this.ws.onclose = () => {
-            console.log('切断しました。');
-        };
-        this.ws.onmessage = (msg) => {
+        this.ws.addEventListener('open', () => { console.log('接続しました。'); });
+        this.ws.addEventListener('error', error => { console.error(`WebSocket Error ${error}`); });
+        this.ws.addEventListener('close', () => { console.log('切断しました。'); });
+        this.ws.addEventListener('message', msg => {
             const obj = JSON.parse(msg.data);
             if (isZaifStream(obj)) {
                 this.update(obj);
             }
-        };
+        });
     }
     public clear(): void {
         if (this.resize_timeid > 0) {
@@ -1165,26 +1159,27 @@ class Client {
     }
     private loadHistory(): void {
         const url = historyDataURL + this.currency_pair;
-        const xhr = new XMLHttpRequest();
-        xhr.ontimeout = (): void => {
-            console.error(`The request for ${url} timed out.`);
-        };
-        xhr.onload = (): void => {
-            if (xhr.readyState === 4) {
-                if (xhr.status === 200) {
-                    console.log("履歴の取得に成功");
-                    this.addDataHistory(JSON.parse(xhr.responseText));
-                } else {
-                    console.error(xhr.statusText);
-                }
+        const controller = new AbortController();
+        const signal = controller.signal;
+        Promise.race<Promise<Response>>([
+            fetch(url, { signal }),
+            new Promise((_, reject): void => {
+                setTimeout(() => {
+                    controller.abort();
+                    reject(new Error("timeout"));
+                }, 10000);
+            })
+        ]).then((resp: Response) => {
+            if (resp.ok) {
+                return resp.json();
             }
-        };
-        xhr.onerror = (): void => {
-            console.error(xhr.statusText);
-        };
-        xhr.open("GET", url, true);
-        xhr.timeout = 5000;		// 5秒
-        xhr.send(null);
+            throw new Error(resp.statusText);
+        }).then(value => {
+            console.log("履歴の取得に成功");
+            this.addDataHistory(value);
+        }).catch(err => {
+            console.error(err);
+        });
     }
     private addDataHistory(data: readonly History[]): void {
         let ask: readonly [number, number] | undefined = undefined;

@@ -537,36 +537,34 @@ class Client {
 
     constructor() {
         this.ws = new WebSocket(streamBaseURL + "xem_jpy");
-        this.ws.onopen = () => {
-            console.log('接続しました。');
-        };
-        this.ws.onerror = error => {
-            console.error(`WebSocket Error ${error}`);
-        };
-        this.ws.onclose = () => {
-            console.log('切断しました。');
-        };
-        this.ws.onmessage = msg => {
+        this.ws.addEventListener('open', () => { console.log('接続しました。'); });
+        this.ws.addEventListener('error', error => { console.error(`WebSocket Error ${error}`); });
+        this.ws.addEventListener('close', () => { console.log('切断しました。'); });
+        this.ws.addEventListener('message', msg => {
             const obj = JSON.parse(msg.data);
             if (isZaifStream(obj)) {
                 this.update(obj);
             }
-        };
+        });
 
         this.candlestick = new CandlestickGraph();
-        Client.ajax(ticksUrl, (xhr: XMLHttpRequest): void => {
-            this.candlestick.addData(JSON.parse(xhr.responseText));
+        Client.ajax(ticksUrl).then(value => {
+            this.candlestick.addData(value);
             this.candlestick.updateDepthDomain();
             this.candlestick.draw();
+        }).catch(err => {
+            console.error(err);
         });
 
         this.depth = new DepthGraph();
         const getDepthData = () => {
             // 1分に一回
-            Client.ajax(depthUrl, (xhr: XMLHttpRequest): void => {
-                this.depth.addData(JSON.parse(xhr.responseText));
+            Client.ajax(depthUrl).then(value => {
+                this.depth.addData(value);
                 this.depth.updateDepthDomain();
                 this.depth.draw();
+            }).catch(err => {
+                console.error(err);
             });
         };
         getDepthData();
@@ -594,26 +592,23 @@ class Client {
             + ` (${dispdata.asset_per}%)`
             + ` - 資産の様子`;
     }
-    public static ajax(url: string, func: (xhr: XMLHttpRequest) => void, ) {
-        const xhr = new XMLHttpRequest();
-        xhr.ontimeout = (): void => {
-            console.error(`The request for ${url} timed out.`);
-        };
-        xhr.onload = (e): void => {
-            if (xhr.readyState === 4) {
-                if (xhr.status === 200) {
-                    func(xhr);
-                } else {
-                    console.error(xhr.statusText);
-                }
+    public static ajax(url: string): Promise<any> {
+        const controller = new AbortController();
+        const signal = controller.signal;
+        return Promise.race<Promise<Response>>([
+            fetch(url, { signal }),
+            new Promise((_, reject): void => {
+                setTimeout(() => {
+                    controller.abort();
+                    reject(new Error("timeout"));
+                }, 10000);
+            })
+        ]).then((resp: Response) => {
+            if (resp.ok) {
+                return resp.json();
             }
-        };
-        xhr.onerror = (e): void => {
-            console.error(xhr.statusText);
-        };
-        xhr.open("GET", url, true);
-        xhr.timeout = 5000;		// 5秒
-        xhr.send(null);
+            throw new Error(resp.statusText);
+        });
     }
 }
 

@@ -68,6 +68,11 @@ func createZaifTickJSONFile(p string, tc *ZaifTicker) {
 		log.Warnw("JSON出力に失敗しました。", "error", err, "path", p)
 		return
 	}
+	err = wfp.Sync()
+	if err != nil {
+		log.Warnw("JSON出力に失敗しました。", "error", err, "path", p)
+		return
+	}
 }
 
 func readTicks(dir string) []Ticker {
