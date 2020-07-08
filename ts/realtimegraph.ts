@@ -4,51 +4,75 @@ import Vue from 'vue';
 // 浮動小数点である事を分かりやすくしたい
 type Float = number;
 
-type CurrencyPair = "btc_jpy" | "xem_jpy" | "mona_jpy" | "bch_jpy" | "eth_jpy";
+const CurrencyPair = {
+	btc_jpy: "btc_jpy",
+	xem_jpy: "xem_jpy",
+	mona_jpy: "mona_jpy",
+	bch_jpy: "bch_jpy",
+	eth_jpy: "eth_jpy"
+} as const;
+type CurrencyPair = typeof CurrencyPair[keyof typeof CurrencyPair];
 function isCurrencyPair(a: string): a is CurrencyPair {
 	switch (a) {
-		case "btc_jpy":		// fallthrough
-		case "xem_jpy":		// fallthrough
-		case "mona_jpy":	// fallthrough
-		case "bch_jpy":		// fallthrough
-		case "eth_jpy":		// fallthrough
+		case CurrencyPair.btc_jpy:		// fallthrough
+		case CurrencyPair.xem_jpy:		// fallthrough
+		case CurrencyPair.mona_jpy:		// fallthrough
+		case CurrencyPair.bch_jpy:		// fallthrough
+		case CurrencyPair.eth_jpy:		// fallthrough
 			return true;
 		default:
 	}
 	return false;
 }
-type Direction = "▼" | "▲";
+const Direction = {
+	down: "▼",
+	up: "▲"
+} as const;
+type Direction = typeof Direction[keyof typeof Direction];
 function isDirection(a: string): a is Direction {
 	switch (a) {
-		case "▼":		// fallthrough
-		case "▲":		// fallthrough
+		case Direction.down:	// fallthrough
+		case Direction.up:		// fallthrough
 			return true;
 		default:
 	}
 	return false;
 }
-type DirectionEng = "ask" | "bid";
+const DirectionEng = {
+	ask: "ask",
+	bid: "bid"
+} as const;
+type DirectionEng = typeof DirectionEng[keyof typeof DirectionEng];
 function isDirectionEng(a: string): a is DirectionEng {
 	switch (a) {
-		case "ask":		// fallthrough
-		case "bid":		// fallthrough
+		case DirectionEng.ask:		// fallthrough
+		case DirectionEng.bid:		// fallthrough
 			return true;
 		default:
 	}
 	return false;
 }
-type Signal = "Asks" | "Bids" | "LastPrice";
+const Signal = {
+	Asks: "Asks",
+	Bids: "Bids",
+	LastPrice: "LastPrice"
+} as const;
+type Signal = typeof Signal[keyof typeof Signal];
 function isSignal(a: string): a is Signal {
 	switch (a) {
-		case "Asks":			// fallthrough
-		case "Bids":			// fallthrough
-		case "LastPrice":		// fallthrough
+		case Signal.Asks:			// fallthrough
+		case Signal.Bids:			// fallthrough
+		case Signal.LastPrice:		// fallthrough
 			return true;
 		default:
 	}
 	return false;
 }
-type AskBid = "Asks" | "Bids";
+const AskBid = {
+	Asks: "Asks",
+	Bids: "Bids"
+} as const;
+type AskBid = typeof AskBid[keyof typeof AskBid];
 
 type Box = {
 	top: number;
@@ -222,11 +246,17 @@ type Display = {
 	};
 }
 
-const svgID = "svgarea";
-const streamBaseURL = "wss://ws.zaif.jp/stream?currency_pair=";
-const historyDataURL = "/api/zaif/1/oldstream/";
-const currency_pair_list: readonly CurrencyPair[] = ["btc_jpy", "xem_jpy", "mona_jpy", "bch_jpy", "eth_jpy"];
-const currency_hash_default = "#btc_jpy";
+const svgID = "svgarea" as const;
+const streamBaseURL = "wss://ws.zaif.jp/stream?currency_pair=" as const;
+const historyDataURL = "/api/zaif/1/oldstream/" as const;
+const currency_pair_list = [
+	CurrencyPair.btc_jpy,
+	CurrencyPair.xem_jpy,
+	CurrencyPair.mona_jpy,
+	CurrencyPair.bch_jpy,
+	CurrencyPair.eth_jpy
+] as const;
+const currency_hash_default = "#" + CurrencyPair.btc_jpy;
 const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
 const atoi = (str: string): number => parseInt(str, 10);
@@ -356,10 +386,10 @@ class Graph {
 	private summary_data: Context[] = [];
 	private context_data: Context[] = [];
 	private depth_data: [Depth, Depth] = [{
-		name: "Asks",
+		name: AskBid.Asks,
 		values: []
 	}, {
-		name: "Bids",
+		name: AskBid.Bids,
 		values: []
 	}];
 	private ydtmp: readonly [ChartPathData, ChartPathData];
@@ -424,15 +454,7 @@ class Graph {
 			.tickPadding(7)
 			.ticks(5);
 		this.depth_yAxis = d3.axisLeft<number>(this.depth_y)
-			.tickFormat((depth: number) => {
-				let ret;
-				if (depth >= 1000000) {
-					ret = floatFormat(depth / 1000000) + "M";
-				} else {
-					ret = ((depth / 1000) | 0) + "k";
-				}
-				return ret;
-			})
+			.tickFormat((depth: number) => (depth >= 1000000) ? floatFormat(depth / 1000000) + "M" : ((depth / 1000) | 0) + "k")
 			.tickPadding(7)
 			.ticks(2);
 		this.depth_line = d3.line<ChartDepthData>()
@@ -562,7 +584,7 @@ class Graph {
 		}, 1000 / fps);
 	}
 	private stopTimer(): void {
-		if (this.tid) {
+		if (this.tid !== 0) {
 			window.clearInterval(this.tid);
 			this.tid = 0;
 		}
@@ -656,7 +678,7 @@ class Graph {
 		return ret;
 	}
 	// copy on write的な戦略でメモリ管理する
-	private static appendData(data: Context, val: ChartPathData, realtime?: boolean) {
+	private static appendData(data: Context, val: ChartPathData, realtime: boolean = false) {
 		const dv = data.values;
 		const old: ChartPathData | undefined = dv[dv.length - 1];
 		// 点の数を減らす処理
@@ -679,7 +701,7 @@ class Graph {
 			dv.push(val);
 		}
 	}
-	public addContext(data: Stream, lastflag?: boolean): void {
+	public addContext(data: Stream, lastflag: boolean = false): void {
 		const date = data.Date;
 		const datestart = date - (this.focus_xaxis_sec * 1000);
 		const l = this.focus_data.length;
@@ -1033,7 +1055,7 @@ class Client {
 		return streamBaseURL + this.currency_pair;
 	}
 	private static getDirection(action: DirectionEng): Direction {
-		return action === "ask" ? "▼" : "▲";
+		return action === DirectionEng.ask ? Direction.down : Direction.up;
 	}
 	private update(obj: ZaifStream) {
 		// 時刻調整

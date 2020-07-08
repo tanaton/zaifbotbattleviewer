@@ -1,51 +1,75 @@
 import * as d3 from 'd3';
 import Vue from 'vue';
 
-type CurrencyPair = "btc_jpy" | "xem_jpy" | "mona_jpy" | "bch_jpy" | "eth_jpy";
+const CurrencyPair = {
+	btc_jpy: "btc_jpy",
+	xem_jpy: "xem_jpy",
+	mona_jpy: "mona_jpy",
+	bch_jpy: "bch_jpy",
+	eth_jpy: "eth_jpy"
+} as const;
+type CurrencyPair = typeof CurrencyPair[keyof typeof CurrencyPair];
 function isCurrencyPair(a: string): a is CurrencyPair {
 	switch (a) {
-		case "btc_jpy":		// fallthrough
-		case "xem_jpy":		// fallthrough
-		case "mona_jpy":	// fallthrough
-		case "bch_jpy":		// fallthrough
-		case "eth_jpy":		// fallthrough
+		case CurrencyPair.btc_jpy:		// fallthrough
+		case CurrencyPair.xem_jpy:		// fallthrough
+		case CurrencyPair.mona_jpy:		// fallthrough
+		case CurrencyPair.bch_jpy:		// fallthrough
+		case CurrencyPair.eth_jpy:		// fallthrough
 			return true;
 		default:
 	}
 	return false;
 }
-type Direction = "▼" | "▲";
+const Direction = {
+	down: "▼",
+	up: "▲"
+} as const;
+type Direction = typeof Direction[keyof typeof Direction];
 function isDirection(a: string): a is Direction {
 	switch (a) {
-		case "▼":		// fallthrough
-		case "▲":		// fallthrough
+		case Direction.down:	// fallthrough
+		case Direction.up:		// fallthrough
 			return true;
 		default:
 	}
 	return false;
 }
-type DirectionEng = "ask" | "bid";
+const DirectionEng = {
+	ask: "ask",
+	bid: "bid"
+} as const;
+type DirectionEng = typeof DirectionEng[keyof typeof DirectionEng];
 function isDirectionEng(a: string): a is DirectionEng {
 	switch (a) {
-		case "ask":		// fallthrough
-		case "bid":		// fallthrough
+		case DirectionEng.ask:		// fallthrough
+		case DirectionEng.bid:		// fallthrough
 			return true;
 		default:
 	}
 	return false;
 }
-type Signal = "Asks" | "Bids" | "LastPrice";
+const Signal = {
+	Asks: "Asks",
+	Bids: "Bids",
+	LastPrice: "LastPrice"
+} as const;
+type Signal = typeof Signal[keyof typeof Signal];
 function isSignal(a: string): a is Signal {
 	switch (a) {
-		case "Asks":			// fallthrough
-		case "Bids":			// fallthrough
-		case "LastPrice":		// fallthrough
+		case Signal.Asks:			// fallthrough
+		case Signal.Bids:			// fallthrough
+		case Signal.LastPrice:		// fallthrough
 			return true;
 		default:
 	}
 	return false;
 }
-type AskBid = "Asks" | "Bids";
+const AskBid = {
+	Asks: "Asks",
+	Bids: "Bids"
+} as const;
+type AskBid = typeof AskBid[keyof typeof AskBid];
 
 type Display = {
 	readonly last_trade: {
@@ -384,10 +408,10 @@ class DepthGraph {
 	private path_stroke: (d: { name: string }) => string;
 
 	private data: [Depth, Depth] = [{
-		name: "Asks",
+		name: AskBid.Asks,
 		values: []
 	}, {
-		name: "Bids",
+		name: AskBid.Bids,
 		values: []
 	}];
 
@@ -438,7 +462,7 @@ class DepthGraph {
 		this.path_stroke = d => this.color(d.name);
 
 		// オブジェクト構築
-		this.color.domain(["Asks", "Bids"]);
+		this.color.domain([AskBid.Asks, AskBid.Bids]);
 
 		this.svg = d3.select("#" + svgIDDepth).append("svg");
 		this.svg
@@ -536,7 +560,7 @@ class Client {
 	private timer: Timer;
 
 	constructor() {
-		this.ws = new WebSocket(streamBaseURL + "xem_jpy");
+		this.ws = new WebSocket(streamBaseURL + CurrencyPair.xem_jpy);
 		this.ws.addEventListener('open', () => { console.log('接続しました。'); });
 		this.ws.addEventListener('error', error => { console.error(`WebSocket Error ${error}`); });
 		this.ws.addEventListener('close', () => { console.log('切断しました。'); });
@@ -577,7 +601,7 @@ class Client {
 		this.candlestick?.dispose();
 	}
 	private static getDirection(action: DirectionEng): Direction {
-		return action === "ask" ? "▼" : "▲";
+		return action === DirectionEng.ask ? Direction.down : Direction.up;
 	}
 	private update(obj: ZaifStream) {
 		dispdata.last_trade.price = obj.last_price.price.toLocaleString();
@@ -614,8 +638,8 @@ class Client {
 const dispdata: Display = {
 	last_trade: {
 		price: "0",
-		action: "▲",
-		type: "bid"
+		action: Direction.up,
+		type: DirectionEng.bid
 	},
 	asset_now: "0",
 	asset_per: "0",
