@@ -13,17 +13,45 @@ const CurrencyPair = {
 } as const;
 type CurrencyPair = typeof CurrencyPair[keyof typeof CurrencyPair];
 function isCurrencyPair(a: string): a is CurrencyPair {
-	switch (a) {
-		case CurrencyPair.btc_jpy:		// fallthrough
-		case CurrencyPair.xem_jpy:		// fallthrough
-		case CurrencyPair.mona_jpy:		// fallthrough
-		case CurrencyPair.bch_jpy:		// fallthrough
-		case CurrencyPair.eth_jpy:		// fallthrough
+	for (const it of Object.values(CurrencyPair)) {
+		if (a === it) {
 			return true;
-		default:
+		}
 	}
 	return false;
 }
+
+const CurrencyFirst = {
+	btc: "btc",
+	xem: "xem",
+	mona: "mona",
+	bch: "bch",
+	eth: "eth"
+} as const;
+type CurrencyFirst = typeof CurrencyFirst[keyof typeof CurrencyFirst];
+function isCurrencyFirst(a: string): a is CurrencyFirst {
+	for (const it of Object.values(CurrencyFirst)) {
+		if (a === it) {
+			return true;
+		}
+	}
+	return false;
+}
+
+const CurrencySecond = {
+	jpy: "jpy",
+	btc: "btc"
+} as const;
+type CurrencySecond = typeof CurrencySecond[keyof typeof CurrencySecond];
+function isCurrencySecond(a: string): a is CurrencySecond {
+	for (const it of Object.values(CurrencySecond)) {
+		if (a === it) {
+			return true;
+		}
+	}
+	return false;
+}
+
 const Direction = {
 	down: "▼",
 	up: "▲"
@@ -73,6 +101,12 @@ const AskBid = {
 	Bids: "Bids"
 } as const;
 type AskBid = typeof AskBid[keyof typeof AskBid];
+
+const ViewerActive = {
+	active: "active",
+	none: ""
+} as const;
+type ViewerActive = typeof ViewerActive[keyof typeof ViewerActive];
 
 type Box = {
 	top: number;
@@ -233,15 +267,15 @@ type Display = {
 		};
 	};
 	readonly currency_pair: {
-		first: string;
-		second: string;
+		first: CurrencyFirst;
+		second: CurrencySecond;
 	};
 	date_diff: number;
 	readonly currencys: {
 		readonly [key in CurrencyPair]: {
 			readonly name: string;
 			readonly hash: string;
-			active: "active" | "";
+			active: ViewerActive;
 		};
 	};
 }
@@ -257,6 +291,7 @@ const currency_pair_list = [
 	CurrencyPair.eth_jpy
 ] as const;
 const currency_hash_default = "#" + CurrencyPair.btc_jpy;
+const currency_url_base = "/zaif/#";
 const timeFormat = d3.timeFormat("%H:%M:%S");
 const floatFormat = d3.format(".1f");
 const atoi = (str: string): number => parseInt(str, 10);
@@ -721,6 +756,8 @@ class Graph {
 			if (!sigs[key]) {
 				continue;
 			}
+			const fdv = fd.values;
+			const cdv = cd.values;
 			const d = sigs[key].Data;
 			const cpd: ChartPathData = {
 				date: date,
@@ -732,21 +769,21 @@ class Graph {
 			Graph.appendData(cd, cpd);
 			this.focus_data_legend[i].last_price = d;
 			// データサイズが大きくなり過ぎないように調節
-			while (fd.values.length > 1000) {
-				fd.values.shift();
+			while (fdv.length > 1000) {
+				fdv.shift();
 			}
-			while ((fd.values.length > 2) && (fd.values[0].date < datestart) && (fd.values[1].date < datestart)) {
-				fd.values.shift();
+			while ((fdv.length > 2) && (fdv[0].date < datestart) && (fdv[1].date < datestart)) {
+				fdv.shift();
 			}
-			if (fd.values[0].date < datestart) {
-				fd.values[0].date = datestart;
+			if (fdv[0].date < datestart) {
+				fdv[0].date = datestart;
 			}
-			while (cd.values.length > 16000) {
-				cd.values.shift();
+			while (cdv.length > 16000) {
+				cdv.shift();
 			}
 			if (this.draw_summary || lastflag) {
 				// contextを要約してsummaryを作る
-				Graph.LTTB(sd.values, cd.values, 200);
+				Graph.LTTB(sd.values, cdv, 200);
 				this.draw_summary_old_date = date;
 			}
 		}
@@ -797,9 +834,10 @@ class Graph {
 		// 縦軸の値の幅を設定
 		if (this.focus_domain_yaxis_update === false && all === false) {
 			for (const fd of this.focus_data) {
-				const l = fd.values.length - 1;
+				const fdv = fd.values;
+				const l = fdv.length - 1;
 				if (l >= 0) {
-					const data = fd.values[l].data;
+					const data = fdv[l].data;
 					if (ydtmp[0].data > data) {
 						ydtmp[0].date = date;
 						ydtmp[0].data = data;
@@ -833,10 +871,11 @@ class Graph {
 		const summary_yd = this.summary_y.domain();
 
 		for (const cd of this.summary_data) {
-			summary_yd[0] = cd.values.reduce(Graph.contextMinFunc, PriceMax);
-			summary_yd[1] = cd.values.reduce(Graph.contextMaxFunc, PriceMin);
-			if (summary_xd[0] > cd.values[0].date) {
-				summary_xd[0] = cd.values[0].date;
+			const cdv = cd.values;
+			summary_yd[0] = cdv.reduce(Graph.contextMinFunc, PriceMax);
+			summary_yd[1] = cdv.reduce(Graph.contextMaxFunc, PriceMin);
+			if (summary_xd[0] > cdv[0].date) {
+				summary_xd[0] = cdv[0].date;
 			}
 		}
 		this.summary_x.domain(summary_xd);
@@ -848,12 +887,13 @@ class Graph {
 	public updateDepthDomain(): void {
 		const depth_xd = this.depth_x.domain();
 		const depth_yd = this.depth_y.domain();
-		depth_xd[0] = this.depth_data[1].values.reduce((num, it) => Math.min(num, it.price), PriceMax);
-		depth_xd[1] = this.depth_data[0].values.reduce((num, it) => Math.max(num, it.price), PriceMin);
+		const dd = this.depth_data;
+		depth_xd[0] = dd[1].values.reduce((num, it) => Math.min(num, it.price), PriceMax);
+		depth_xd[1] = dd[0].values.reduce((num, it) => Math.max(num, it.price), PriceMin);
 		depth_yd[0] = 0;
 		depth_yd[1] = Math.max(
-			this.depth_data[0].values.reduce(Graph.depthMaxFunc, PriceMin),
-			this.depth_data[1].values.reduce(Graph.depthMaxFunc, PriceMin)
+			dd[0].values.reduce(Graph.depthMaxFunc, PriceMin),
+			dd[1].values.reduce(Graph.depthMaxFunc, PriceMin)
 		);
 		this.depth_x.domain(depth_xd);
 		this.depth_y.domain(depth_yd).nice();
@@ -1089,14 +1129,14 @@ class Client {
 	private updateView(obj: ZaifStream): void {
 		for (const key in dispdata.currencys) {
 			if (isCurrencyPair(key) && dispdata.currencys.hasOwnProperty(key)) {
-				dispdata.currencys[key].active = "";
+				dispdata.currencys[key].active = ViewerActive.none;
 			}
 		}
-		dispdata.currencys[this.currency_pair].active = "active";
+		dispdata.currencys[this.currency_pair].active = ViewerActive.active;
 		{
-			const cp: readonly string[] = this.currency_pair.split("_");
-			dispdata.currency_pair.first = cp[0];
-			dispdata.currency_pair.second = cp[1];
+			const [first, second] = this.currency_pair.split("_");
+			dispdata.currency_pair.first = (isCurrencyFirst(first)) ? first : CurrencyFirst.btc;
+			dispdata.currency_pair.second = (isCurrencySecond(second) ? second : CurrencySecond.jpy);
 		}
 		dispdata.last_trade.price = obj.last_price.price.toLocaleString();
 		dispdata.last_trade.action = Client.getDirection(obj.last_price.action);
@@ -1258,8 +1298,8 @@ class Client {
 const dispdata: Display = {
 	last_trade: {
 		price: "0",
-		action: "▲",
-		type: "bid"
+		action: Direction.up,
+		type: DirectionEng.bid
 	},
 	bids: [],
 	asks: [],
@@ -1288,16 +1328,16 @@ const dispdata: Display = {
 		}
 	},
 	currency_pair: {
-		first: "btc",
-		second: "jpy"
+		first: CurrencyFirst.btc,
+		second: CurrencySecond.jpy
 	},
 	date_diff: 0,
 	currencys: {
-		btc_jpy: { name: "btc/jpy", hash: "/zaif/#btc_jpy", active: "" },
-		xem_jpy: { name: "xem/jpy", hash: "/zaif/#xem_jpy", active: "" },
-		mona_jpy: { name: "mona/jpy", hash: "/zaif/#mona_jpy", active: "" },
-		bch_jpy: { name: "bch/jpy", hash: "/zaif/#bch_jpy", active: "" },
-		eth_jpy: { name: "eth/jpy", hash: "/zaif/#eth_jpy", active: "" }
+		btc_jpy: { name: CurrencyFirst.btc + "/" + CurrencySecond.jpy, hash: currency_url_base + CurrencyPair.btc_jpy, active: ViewerActive.none },
+		xem_jpy: { name: CurrencyFirst.xem + "/" + CurrencySecond.jpy, hash: currency_url_base + CurrencyPair.xem_jpy, active: ViewerActive.none },
+		mona_jpy: { name: CurrencyFirst.mona + "/" + CurrencySecond.jpy, hash: currency_url_base + CurrencyPair.mona_jpy, active: ViewerActive.none },
+		bch_jpy: { name: CurrencyFirst.bch + "/" + CurrencySecond.jpy, hash: currency_url_base + CurrencyPair.bch_jpy, active: ViewerActive.none },
+		eth_jpy: { name: CurrencyFirst.eth + "/" + CurrencySecond.jpy, hash: currency_url_base + CurrencyPair.eth_jpy, active: ViewerActive.none }
 	}
 };
 const vm = new Vue({
