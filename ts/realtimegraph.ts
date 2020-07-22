@@ -507,7 +507,7 @@ class Graph {
 		this.summary_color = d3.scaleOrdinal<string>().range(["#b94047", "#47ba41", "#4147ba", "#bab441", "#41bab4", "#b441ba"]);
 		this.summary_path_stroke = d => this.summary_color(d.name);
 
-		this.focus_legend_update = (d: Legend): string => `${d.name} ${d.last_price.toLocaleString()}`;
+		this.focus_legend_update = (d: Legend): string => `${d.name} ${d.last_price.toLocaleString(undefined, { maximumFractionDigits: 5 })}`;
 
 		// オブジェクト構築
 		this.init(obj);
@@ -1138,7 +1138,7 @@ class Client {
 			dispdata.currency_pair.first = (isCurrencyFirst(first)) ? first : CurrencyFirst.btc;
 			dispdata.currency_pair.second = (isCurrencySecond(second) ? second : CurrencySecond.jpy);
 		}
-		dispdata.last_trade.price = obj.last_price.price.toLocaleString();
+		dispdata.last_trade.price = obj.last_price.price.toLocaleString(undefined, { maximumFractionDigits: 5 });
 		dispdata.last_trade.action = Client.getDirection(obj.last_price.action);
 		dispdata.last_trade.type = obj.last_price.action;
 		document.title = dispdata.last_trade.action
@@ -1165,7 +1165,7 @@ class Client {
 					trade_type: it.trade_type,
 					direction: dir,
 					price_orig: it.price,
-					price: it.price.toLocaleString(),
+					price: it.price.toLocaleString(undefined, { maximumFractionDigits: 5 }),
 					amount: it.amount,
 					date: timeFormat(this.tmpdate)
 				};
@@ -1174,7 +1174,7 @@ class Client {
 				dispdata.trades[i].trade_type = it.trade_type;
 				dispdata.trades[i].direction = dir;
 				dispdata.trades[i].price_orig = it.price;
-				dispdata.trades[i].price = it.price.toLocaleString();
+				dispdata.trades[i].price = it.price.toLocaleString(undefined, { maximumFractionDigits: 5 });
 				dispdata.trades[i].amount = it.amount;
 				dispdata.trades[i].date = timeFormat(this.tmpdate);
 			}
@@ -1188,8 +1188,8 @@ class Client {
 		let index = 0;
 		for (const it of data) {
 			dep += it[0] * it[1];
-			const price = it[0].toLocaleString();
-			const depth = (dep | 0).toLocaleString();
+			const price = it[0].toLocaleString(undefined, { maximumFractionDigits: 5 });
+			const depth = (dep | 0).toLocaleString(undefined, { maximumFractionDigits: 5 });
 			if (dst[index] === undefined) {
 				dst[index] = {
 					price: price,

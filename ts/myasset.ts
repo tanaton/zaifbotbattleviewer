@@ -604,13 +604,13 @@ class Client {
 		return action === DirectionEng.ask ? Direction.down : Direction.up;
 	}
 	private update(obj: ZaifStream) {
-		dispdata.last_trade.price = obj.last_price.price.toLocaleString();
+		dispdata.last_trade.price = obj.last_price.price.toLocaleString(undefined, { maximumFractionDigits: 5 });
 		dispdata.last_trade.action = Client.getDirection(obj.last_price.action);
 		dispdata.last_trade.type = obj.last_price.action;
 		const asset_now = obj.last_price.price * dispdata.currency_number;
-		dispdata.asset_now = Math.round(asset_now).toLocaleString();
+		dispdata.asset_now = Math.round(asset_now).toLocaleString(undefined, { maximumFractionDigits: 5 });
 		const per = asset_now / (dispdata.currency_number * dispdata.purchase_price);
-		dispdata.asset_per = (Math.round(per * 10000) / 100).toLocaleString();
+		dispdata.asset_per = (Math.round(per * 10000) / 100).toLocaleString(undefined, { maximumFractionDigits: 5 });
 		document.title = dispdata.last_trade.action
 			+ ` ${dispdata.asset_now}`
 			+ ` (${dispdata.asset_per}%)`
